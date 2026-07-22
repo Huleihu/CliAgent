@@ -1,0 +1,34 @@
+# Python bytecode and test/tool caches
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Local environments (the project uses Conda; do not commit any environment)
+.venv/
+venv/
+env/
+.conda/
+
+# Environment secrets and local configuration
+.env
+.env.*
+!.env.example
+
+# Build and coverage artifacts
+build/
+dist/
+*.egg-info/
+htmlcov/
+.coverage
+coverage.xml
+
+# Editor and OS files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Temporary files
+.tmp/
