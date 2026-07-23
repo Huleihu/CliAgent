@@ -32,6 +32,19 @@ conda activate local-dev-agent
 Copy-Item .env.example .env
 ```
 
+当前真实模型使用 DeepSeek 的 Anthropic 兼容接口。请在 `.env` 中填写
+`DEEPSEEK_API_KEY`；模型名、接口地址和最大输出 Token 可按需要调整。
+运行入口创建模型客户端时，先加载 `.env`，再读取配置：
+
+```python
+from dotenv import load_dotenv
+
+from local_dev_agent.models import DeepSeekAnthropicModelClient, DeepSeekSettings
+
+load_dotenv()
+model = DeepSeekAnthropicModelClient(DeepSeekSettings.from_environment())
+```
+
 ## 常用命令
 
 ```powershell

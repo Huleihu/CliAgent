@@ -2,7 +2,7 @@
 
 ## 当前状态
 
-- 已完成 Phase 1 的第十个教学式迭代：状态机、JSON 文件状态仓储、最小内部事件协议、Runtime 输入编排、内容块模型协议、纯文本 Agent Loop、统一 logging 与受控工具框架。
+- 已完成 Phase 1 的第十一个教学式迭代：状态机、JSON 文件状态仓储、最小内部事件协议、Runtime 输入编排、内容块模型协议、纯文本 Agent Loop、统一 logging、受控工具框架与 DeepSeek 真实模型适配。
 - 使用 Conda 环境 `local-dev-agent`（Python 3.13）。
 
 ## 已完成
@@ -52,15 +52,19 @@
 - 实现 `ToolRegistry`、`FunctionTool`、`FakeTool` 与 `ToolExecutor`：执行器统一处理工具查找、必填参数校验、异常收束和耗时统计，将预期失败转换为结构化 `ToolCallResult`，不让工具异常直接进入 Agent Loop。
 - 实现受控 `ToolDiscovery`：仅扫描代码显式指定 Python 包的直接子模块，发现公开的 `Tool` 实例或 `create_tool` 工厂；拒绝任意路径扫描、递归扫描、重复工具名、无效工厂和导入失败。
 - 添加工具框架单元测试，覆盖成功执行与调用标识透传、缺失参数、未知工具、工具异常、非法返回值、注册去重、顶层参数冻结，以及实例/工厂动态发现和发现失败。
+- 新增 `DeepSeekSettings` 与 `DeepSeekAnthropicModelClient`：从 `.env` 中的 `DEEPSEEK_API_KEY`、`DEEPSEEK_ANTHROPIC_BASE_URL`、`DEEPSEEK_MODEL`、`DEEPSEEK_MAX_TOKENS` 读取显式配置，使用已有 `anthropic` SDK 访问 DeepSeek Anthropic 兼容接口。
+- DeepSeek Provider 将 Anthropic 格式的 `text`、`tool_use` 内容块和停止原因映射到既有 `ModelResponse` 协议；暂不向真实模型声明工具，因此工具调用执行与结果回填仍保持为后续独立步骤。
+- 更新 `.env.example` 与 `README.md`，说明 DeepSeek 本地配置和模型客户端创建方式；真实 `.env` 未被读取、修改或提交。
+- 添加 DeepSeek Provider 单元测试，覆盖环境配置读取与校验、文本/工具调用响应映射、SDK 请求参数、Provider 异常和未知停止原因；全部使用注入的假 SDK 客户端，不访问网络、不产生 API 费用。
 
 ## 验证
 
 - `anthropic`、`python-dotenv`、`pytest` 可在 Conda 环境中导入。
 - `ruff` 可运行。
 - 已人工核对 `TDD.md` 与 `AGENT_REQUIREMENTS_CHECKLIST.txt` 的 S01–S30 覆盖关系；本次仅修改文档，未运行代码测试。
-- `python -m pytest`：58 passed（覆盖状态机、JSON 文件状态仓储、最小内部事件协议、Runtime 输入编排、内容块模型协议、纯文本 Agent Loop、统一 logging 与受控工具框架）。
+- `python -m pytest`：65 passed（覆盖状态机、JSON 文件状态仓储、最小内部事件协议、Runtime 输入编排、内容块模型协议、纯文本 Agent Loop、统一 logging、受控工具框架与 DeepSeek Provider）。
 - `python -m ruff check src tests`：通过。
 
 ## 下一步
 
-- 检查通过后，继续 Phase 1 的下一个小步：让 Agent Loop 将 `ToolUseBlock` 转换为 `ToolCallRequest` 并调用 `ToolExecutor`；随后定义工具结果内容块和可续接的模型请求上下文，以完成结果回填闭环。Permission 管线仍保持为后续独立步骤。
+- 检查通过后，继续 Phase 1 的下一个小步：让 Agent Loop 将 `ToolUseBlock` 转换为 `ToolCallRequest` 并调用 `ToolExecutor`；随后定义工具结果内容块和可续接的模型请求上下文，以完成结果回填闭环。Permission、Hook 与事件管线仍保持为后续独立步骤。
