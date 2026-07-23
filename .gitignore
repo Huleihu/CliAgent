@@ -33,6 +33,7 @@ Thumbs.db
 # Temporary files
 .tmp/
 .pytest-tmp/
+pytest-cache-files-*/
 
 # Local runtime state
 var/

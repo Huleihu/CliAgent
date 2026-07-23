@@ -2,7 +2,7 @@
 
 ## 当前状态
 
-- 已完成 Phase 1 的第四个教学式迭代：状态机与可检查的 JSON 文件状态仓储。
+- 已完成 Phase 1 的第五个教学式迭代：状态机、JSON 文件状态仓储与最小内部事件协议。
 - 使用 Conda 环境 `local-dev-agent`（Python 3.13）。
 
 ## 已完成
@@ -34,15 +34,18 @@
 - JSON 仓储按 `state_version` 执行乐观锁校验，拒绝旧快照覆盖新版本；支持按 `session_id` 查询 Run、按 `run_id` 查询 Step，并将 `var/` 加入 Git 忽略规则。
 - 添加 JSON 状态仓储单元测试，覆盖跨 Repository 实例恢复、层级查询、版本冲突、可读文件结构、缺失状态、损坏文件中文错误与转换历史恢复。
 - 将 pytest 临时目录固定为工作区内且已忽略的 `.pytest-tmp/`，避免测试依赖系统临时目录权限。
+- 新增不可变、版本化的 `UserInputEvent` 与 `EventType`，用于表示已接收、等待 Runtime 处理的用户输入；事件带 `event_id`、`session_id`、UTC 时间戳与内容，但暂不承担创建 Run 或调用模型的职责。
+- 添加用户输入事件单元测试，覆盖协议字段、自动 ID、UTC 规范化、无时区时间、空输入中文错误与不可变性。
+- 更新 `.gitignore`：忽略 pytest 异常临时缓存目录，减少本地文件树噪音。
 
 ## 验证
 
 - `anthropic`、`python-dotenv`、`pytest` 可在 Conda 环境中导入。
 - `ruff` 可运行。
 - 已人工核对 `TDD.md` 与 `AGENT_REQUIREMENTS_CHECKLIST.txt` 的 S01–S30 覆盖关系；本次仅修改文档，未运行代码测试。
-- `python -m pytest`：30 passed（覆盖状态机与 JSON 文件状态仓储）。
+- `python -m pytest`：36 passed（覆盖状态机、JSON 文件状态仓储与最小内部事件协议）。
 - `python -m ruff check src tests`：通过。
 
 ## 下一步
 
-- 检查通过后，继续 Phase 1 的下一个小步：定义最小内部 Message/Event 协议，再由 Runtime 编排事件、状态仓储与后续 Fake Model。
+- 检查通过后，继续 Phase 1 的下一个小步：实现最小 Runtime 编排服务，消费 `UserInputEvent`，创建并持久化 Session、Run 与首个 Step。
