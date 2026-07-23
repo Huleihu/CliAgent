@@ -4,11 +4,14 @@ from .deepseek import DeepSeekAnthropicModelClient, DeepSeekModelError
 from .deepseek_settings import DeepSeekConfigurationError, DeepSeekSettings
 from .fake import FakeModel
 from .ports import (
+    MessageRole,
     ModelClient,
+    ModelMessage,
     ModelRequest,
     ModelResponse,
     StopReason,
     TextBlock,
+    ToolResultBlock,
     ToolUseBlock,
 )
 
@@ -18,10 +21,13 @@ __all__ = [
     "DeepSeekModelError",
     "DeepSeekSettings",
     "FakeModel",
+    "MessageRole",
     "ModelClient",
+    "ModelMessage",
     "ModelRequest",
     "ModelResponse",
     "StopReason",
     "TextBlock",
+    "ToolResultBlock",
     "ToolUseBlock",
 ]
