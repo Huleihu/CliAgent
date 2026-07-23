@@ -2,7 +2,7 @@
 
 ## 当前状态
 
-- 已完成 Phase 1 的第五个教学式迭代：状态机、JSON 文件状态仓储与最小内部事件协议。
+- 已完成 Phase 1 的第六个教学式迭代：状态机、JSON 文件状态仓储、最小内部事件协议与 Runtime 输入编排。
 - 使用 Conda 环境 `local-dev-agent`（Python 3.13）。
 
 ## 已完成
@@ -37,15 +37,17 @@
 - 新增不可变、版本化的 `UserInputEvent` 与 `EventType`，用于表示已接收、等待 Runtime 处理的用户输入；事件带 `event_id`、`session_id`、UTC 时间戳与内容，但暂不承担创建 Run 或调用模型的职责。
 - 添加用户输入事件单元测试，覆盖协议字段、自动 ID、UTC 规范化、无时区时间、空输入中文错误与不可变性。
 - 更新 `.gitignore`：忽略 pytest 异常临时缓存目录，减少本地文件树噪音。
+- 实现 `UserInputRuntimeService`：消费已关联既有 Session 的 `UserInputEvent`，创建排队中的 `RunState` 与待执行的规划 `StepState`，再将 Run、Step、激活后的 Session 依次保存到 JSON 仓储。
+- 新增最小 Runtime 编排单元测试，覆盖状态创建与持久化、缺失 Session 的中文错误，以及活跃 Run 存在时拒绝并发用户输入。
 
 ## 验证
 
 - `anthropic`、`python-dotenv`、`pytest` 可在 Conda 环境中导入。
 - `ruff` 可运行。
 - 已人工核对 `TDD.md` 与 `AGENT_REQUIREMENTS_CHECKLIST.txt` 的 S01–S30 覆盖关系；本次仅修改文档，未运行代码测试。
-- `python -m pytest`：36 passed（覆盖状态机、JSON 文件状态仓储与最小内部事件协议）。
+- `python -m pytest`：39 passed（覆盖状态机、JSON 文件状态仓储、最小内部事件协议与 Runtime 输入编排）。
 - `python -m ruff check src tests`：通过。
 
 ## 下一步
 
-- 检查通过后，继续 Phase 1 的下一个小步：实现最小 Runtime 编排服务，消费 `UserInputEvent`，创建并持久化 Session、Run 与首个 Step。
+- 检查通过后，继续 Phase 1 的下一个小步：实现 Fake Model 与最小 Agent Loop 的纯文本完成路径，使规划 Step 和 Run 能进入成功终态。
