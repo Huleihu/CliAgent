@@ -1,5 +1,7 @@
 from datetime import datetime, timezone
 
+import pytest
+
 from local_dev_agent.domain.messages import UserInputEvent
 from local_dev_agent.domain.state import (
     RunStatus,
@@ -8,6 +10,8 @@ from local_dev_agent.domain.state import (
     StepStatus,
 )
 from local_dev_agent.models.fake import FakeModel
+from local_dev_agent.models.ports import ModelResponse, StopReason, ToolUseBlock
+from local_dev_agent.runtime.errors import UnsupportedModelResponseError
 from local_dev_agent.runtime.input_service import UserInputRuntimeService
 from local_dev_agent.runtime.loop import MinimalAgentLoop
 from local_dev_agent.storage.json_state_repository import JsonFileStateRepository
@@ -33,7 +37,7 @@ def test_minimal_agent_loop_completes_a_text_response_and_persists_states(
         occurred_at=timestamp,
     )
     start = UserInputRuntimeService(repository).handle(event)
-    model = FakeModel("项目状态正常。")
+    model = FakeModel(ModelResponse.text_completion("项目状态正常。"))
 
     result = MinimalAgentLoop(repository, model).execute(
         start,
@@ -54,3 +58,47 @@ def test_minimal_agent_loop_completes_a_text_response_and_persists_states(
         RunStatus.RUNNING,
         RunStatus.COMPLETED,
     ]
+
+
+def test_minimal_agent_loop_rejects_tool_use_without_marking_the_run_complete(
+    tmp_path,
+) -> None:
+    timestamp = datetime(2026, 7, 23, 9, 0, tzinfo=timezone.utc)
+    repository = JsonFileStateRepository(tmp_path)
+    session = SessionState.create(
+        session_id="session-1",
+        tenant_id="tenant-1",
+        user_id="user-1",
+        project_id="project-1",
+        created_at=timestamp,
+    )
+    repository.save_session(session)
+    event = UserInputEvent.create(
+        session_id=session.session_id,
+        content="读取 README。",
+        occurred_at=timestamp,
+    )
+    start = UserInputRuntimeService(repository).handle(event)
+    response = ModelResponse(
+        stop_reason=StopReason.TOOL_USE,
+        content=(
+            ToolUseBlock(
+                tool_use_id="toolu-1",
+                name="read_file",
+                input={"path": "README.md"},
+            ),
+        ),
+    )
+
+    with pytest.raises(UnsupportedModelResponseError, match="暂不支持停止原因"):
+        MinimalAgentLoop(repository, FakeModel(response)).execute(
+            start,
+            occurred_at=timestamp,
+        )
+
+    persisted_run = repository.get_run(start.run.run_id)
+    persisted_step = repository.get_step(start.first_step.step_id)
+    assert persisted_run is not None
+    assert persisted_step is not None
+    assert persisted_run.status is RunStatus.RUNNING
+    assert persisted_step.status is StepStatus.EXECUTING

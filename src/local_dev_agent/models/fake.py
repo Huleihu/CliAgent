@@ -4,12 +4,10 @@ from .ports import ModelRequest, ModelResponse
 
 
 class FakeModel:
-    """始终返回预设文本，并记录收到的请求以便断言。"""
+    """始终返回预设规范化响应，并记录收到的请求以便断言。"""
 
-    def __init__(self, response_text: str) -> None:
-        if not response_text:
-            raise ValueError("模拟模型的响应文本不能为空。")
-        self._response_text = response_text
+    def __init__(self, response: ModelResponse) -> None:
+        self._response = response
         self._requests: list[ModelRequest] = []
 
     @property
@@ -22,4 +20,4 @@ class FakeModel:
         """记录请求并返回固定响应，不调用任何外部服务。"""
 
         self._requests.append(request)
-        return ModelResponse(text=self._response_text)
+        return self._response

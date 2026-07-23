@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from local_dev_agent.domain.messages import UserInputEvent
 from local_dev_agent.domain.state import SessionState
 from local_dev_agent.models.fake import FakeModel
+from local_dev_agent.models.ports import ModelResponse
 from local_dev_agent.observability.logging import configure_logging
 from local_dev_agent.runtime.input_service import UserInputRuntimeService
 from local_dev_agent.runtime.loop import MinimalAgentLoop
@@ -38,7 +39,10 @@ def test_runtime_and_agent_loop_record_key_lifecycle_events(tmp_path) -> None:
     )
 
     start = UserInputRuntimeService(repository).handle(event)
-    MinimalAgentLoop(repository, FakeModel("项目状态正常。")).execute(
+    MinimalAgentLoop(
+        repository,
+        FakeModel(ModelResponse.text_completion("项目状态正常。")),
+    ).execute(
         start,
         occurred_at=timestamp,
     )

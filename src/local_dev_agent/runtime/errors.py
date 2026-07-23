@@ -7,3 +7,13 @@ class SessionNotFoundError(ValueError):
     def __init__(self, *, session_id: str) -> None:
         super().__init__(f"找不到用户输入事件关联的会话“{session_id}”。")
         self.session_id = session_id
+
+
+class UnsupportedModelResponseError(ValueError):
+    """当最小 Agent Loop 收到尚未实现处理分支的模型响应时抛出。"""
+
+    def __init__(self, *, stop_reason: str) -> None:
+        super().__init__(
+            f"最小 Agent Loop 暂不支持停止原因“{stop_reason}”对应的模型响应。"
+        )
+        self.stop_reason = stop_reason

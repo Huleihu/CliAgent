@@ -7,9 +7,15 @@ from datetime import datetime, timezone
 import logging
 
 from local_dev_agent.domain.state import RunState, RunStatus, SessionState, StepState, StepStatus
-from local_dev_agent.models import ModelClient, ModelRequest, ModelResponse
+from local_dev_agent.models import (
+    ModelClient,
+    ModelRequest,
+    ModelResponse,
+    StopReason,
+)
 from local_dev_agent.storage.ports import StateRepository
 
+from .errors import UnsupportedModelResponseError
 from .input_service import RuntimeStartResult
 
 logger = logging.getLogger(__name__)
@@ -79,6 +85,9 @@ class MinimalAgentLoop:
             logger.error("模型调用失败。", exc_info=True, extra=log_context)
             raise
         logger.info("模型调用完成。", extra=log_context)
+        if response.stop_reason is not StopReason.END_TURN or not response.text_blocks:
+            logger.warning("模型响应需要尚未实现的处理分支。", extra=log_context)
+            raise UnsupportedModelResponseError(stop_reason=response.stop_reason)
 
         succeeded_step = executing_step.transition_to(
             StepStatus.SUCCEEDED,

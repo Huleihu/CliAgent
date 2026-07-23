@@ -2,7 +2,7 @@
 
 ## 当前状态
 
-- 已完成 Phase 1 的第八个教学式迭代：状态机、JSON 文件状态仓储、最小内部事件协议、Runtime 输入编排、纯文本 Agent Loop 与统一 logging。
+- 已完成 Phase 1 的第九个教学式迭代：状态机、JSON 文件状态仓储、最小内部事件协议、Runtime 输入编排、内容块模型协议、纯文本 Agent Loop 与统一 logging。
 - 使用 Conda 环境 `local-dev-agent`（Python 3.13）。
 
 ## 已完成
@@ -45,15 +45,18 @@
 - 新增基于标准库 `logging` 的统一日志配置：控制台输出可读日志，`var/logs/agent.jsonl` 输出带滚动策略的结构化 JSONL 日志，并保留事件、会话、运行和步骤关联标识。
 - Runtime 输入编排与最小 Agent Loop 已记录关键生命周期 INFO 日志；模型调用异常会记录带异常栈的 ERROR 日志后继续抛出，由后续错误恢复策略处理。
 - 添加 logging 单元测试，覆盖控制台与文件 Handler、JSONL 关联字段、重复配置去重，以及 Runtime/Agent Loop 关键日志事件。
+- 将内部 `ModelResponse` 升级为与 Provider 解耦的内容块协议：包含 `stop_reason`、多个 `TextBlock` / `ToolUseBlock`，并提供文本完成的便捷构造方法；`ToolUseBlock` 保留调用标识、工具名称与冻结后的顶层参数映射。
+- `FakeModel` 改为返回预设的规范化 `ModelResponse`；`MinimalAgentLoop` 仅在 `end_turn` 且含文本块时完成 Run，收到 `tool_use` 等未实现分支时记录 WARNING 并拒绝将 Run/Step 标记为成功。
+- 添加内容块模型协议与工具调用安全分支测试，覆盖多文本块、工具调用结构、工具参数顶层不可变、非法停止原因组合，以及未执行工具调用不得完成 Run。
 
 ## 验证
 
 - `anthropic`、`python-dotenv`、`pytest` 可在 Conda 环境中导入。
 - `ruff` 可运行。
 - 已人工核对 `TDD.md` 与 `AGENT_REQUIREMENTS_CHECKLIST.txt` 的 S01–S30 覆盖关系；本次仅修改文档，未运行代码测试。
-- `python -m pytest`：45 passed（覆盖状态机、JSON 文件状态仓储、最小内部事件协议、Runtime 输入编排、纯文本 Agent Loop 与统一 logging）。
+- `python -m pytest`：50 passed（覆盖状态机、JSON 文件状态仓储、最小内部事件协议、Runtime 输入编排、内容块模型协议、纯文本 Agent Loop 与统一 logging）。
 - `python -m ruff check src tests`：通过。
 
 ## 下一步
 
-- 检查通过后，继续 Phase 1 的下一个小步：实现最小 CLI 入口，配置 logging 并驱动 Fake Model 纯文本运行，以便从终端直接观察日志与 JSON 状态文件。
+- 检查通过后，继续 Phase 1 的下一个小步：定义最小 Tool 协议与 Fake Tool，为 `ToolUseBlock` 的安全执行、结果回填与后续 Permission 管线建立边界。
