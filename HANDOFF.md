@@ -13,6 +13,8 @@
 - 添加项目开发规则：`AGENTS.md`。
 - 约定提交信息使用 Conventional Commits 标题与项目符号正文。
 - 已配置本仓库 Git 身份，并完成首次提交 `chore: 初始化项目开发环境`；提交标题与正文使用中文。
+- 添加 `environment.yml`、`.env.example` 与根目录 `README.md`，完善环境复现和项目上手说明。
+- 已提交环境复现与上手文档更新：`docs: 完善项目上手配置`。
 
 ## 验证
 
