@@ -18,6 +18,7 @@ from .ports import (
     ToolResultBlock,
     ToolUseBlock,
 )
+from local_dev_agent.tools.schema import ToolDefinition
 
 
 class DeepSeekModelError(RuntimeError):
@@ -38,16 +39,31 @@ class DeepSeekAnthropicModelClient:
         """调用 DeepSeek，并将兼容响应转换为内部内容块协议。"""
 
         messages = self._map_request_messages(request)
+        request_parameters: dict[str, object] = {
+            "model": self._settings.model,
+            "max_tokens": self._settings.max_tokens,
+            "messages": messages,
+        }
+        if request.tools:
+            request_parameters["tools"] = [
+                self._map_tool_definition(tool) for tool in request.tools
+            ]
         try:
-            response = self._client.messages.create(
-                model=self._settings.model,
-                max_tokens=self._settings.max_tokens,
-                messages=messages,
-            )
+            response = self._client.messages.create(**request_parameters)
         except Exception as error:
             raise DeepSeekModelError("DeepSeek 模型调用失败。") from error
 
         return self._map_response(response)
+
+    @staticmethod
+    def _map_tool_definition(tool: ToolDefinition) -> dict[str, object]:
+        """将运行时工具定义转换为 Anthropic 兼容的工具声明。"""
+
+        return {
+            "name": tool.name,
+            "description": tool.description,
+            "input_schema": dict(tool.parameters),
+        }
 
     def _map_request_messages(self, request: ModelRequest) -> list[dict[str, object]]:
         """将内部消息协议转换为 Anthropic 兼容接口的 messages 字段。"""

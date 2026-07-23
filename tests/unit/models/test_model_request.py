@@ -10,6 +10,7 @@ from local_dev_agent.models import (
     ToolResultBlock,
     ToolUseBlock,
 )
+from local_dev_agent.tools.schema import ToolDefinition
 
 
 def test_legacy_user_input_is_normalized_to_a_user_message() -> None:
@@ -112,3 +113,19 @@ def test_model_request_rejects_mixed_or_missing_context_sources() -> None:
 
     with pytest.raises(ValueError, match="必须提供"):
         ModelRequest(session_id="session-1", run_id="run-1")
+
+
+def test_model_request_preserves_tool_definitions_for_the_provider() -> None:
+    tool = ToolDefinition(
+        name="read_file",
+        description="读取文本文件。",
+        parameters={"type": "object", "properties": {}},
+    )
+    request = ModelRequest(
+        session_id="session-1",
+        run_id="run-1",
+        user_input="读取 README。",
+        tools=(tool,),
+    )
+
+    assert request.tools == (tool,)

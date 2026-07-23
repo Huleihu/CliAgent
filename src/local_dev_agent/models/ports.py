@@ -6,6 +6,8 @@ from enum import StrEnum
 from types import MappingProxyType
 from typing import Mapping, Protocol
 
+from local_dev_agent.tools.schema import ToolDefinition
+
 
 def _require_non_empty_text(field_name: str, value: str) -> None:
     """拒绝空标识和空文本，避免产生无法关联或无意义的消息。"""
@@ -132,6 +134,7 @@ class ModelRequest:
     run_id: str
     user_input: str | None = None
     messages: tuple[ModelMessage, ...] = ()
+    tools: tuple[ToolDefinition, ...] = ()
 
     def __post_init__(self) -> None:
         """兼容旧的单文本调用，同时拒绝两种上下文来源混用。"""
@@ -142,6 +145,10 @@ class ModelRequest:
             _require_non_empty_text("user_input", self.user_input)
         if not isinstance(self.messages, tuple):
             raise ValueError("模型请求的 messages 必须是元组。")
+        if not isinstance(self.tools, tuple) or not all(
+            isinstance(tool, ToolDefinition) for tool in self.tools
+        ):
+            raise ValueError("模型请求的 tools 必须是 ToolDefinition 元组。")
         if self.user_input is not None and self.messages:
             raise ValueError("模型请求不能同时提供 user_input 和 messages。")
         if self.user_input is None and not self.messages:
@@ -154,10 +161,16 @@ class ModelRequest:
         session_id: str,
         run_id: str,
         messages: tuple[ModelMessage, ...],
+        tools: tuple[ToolDefinition, ...] = (),
     ) -> "ModelRequest":
         """创建携带完整多轮上下文的请求。"""
 
-        return cls(session_id=session_id, run_id=run_id, messages=messages)
+        return cls(
+            session_id=session_id,
+            run_id=run_id,
+            messages=messages,
+            tools=tools,
+        )
 
     @property
     def conversation(self) -> tuple[ModelMessage, ...]:

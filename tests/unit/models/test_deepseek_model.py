@@ -17,6 +17,7 @@ from local_dev_agent.models.ports import (
     ToolResultBlock,
     ToolUseBlock,
 )
+from local_dev_agent.tools.schema import ToolDefinition
 
 
 @dataclass
@@ -237,6 +238,42 @@ def test_model_client_serializes_multi_turn_messages_and_tool_results() -> None:
                 }
             ],
         },
+    ]
+
+
+def test_model_client_declares_registered_tool_definitions_when_requested() -> None:
+    client = FakeAnthropicClient(
+        FakeMessage(stop_reason="end_turn", content=[FakeTextContent("已完成。")])
+    )
+    request = ModelRequest(
+        session_id="session-1",
+        run_id="run-1",
+        user_input="读取 README。",
+        tools=(
+            ToolDefinition(
+                name="read_file",
+                description="读取工作区中的文本文件。",
+                parameters={
+                    "type": "object",
+                    "properties": {"path": {"type": "string"}},
+                    "required": ["path"],
+                },
+            ),
+        ),
+    )
+
+    DeepSeekAnthropicModelClient(_settings(), client=client).generate(request)
+
+    assert client.messages.calls[0]["tools"] == [
+        {
+            "name": "read_file",
+            "description": "读取工作区中的文本文件。",
+            "input_schema": {
+                "type": "object",
+                "properties": {"path": {"type": "string"}},
+                "required": ["path"],
+            },
+        }
     ]
 
 
