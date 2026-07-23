@@ -45,6 +45,18 @@ load_dotenv()
 model = DeepSeekAnthropicModelClient(DeepSeekSettings.from_environment())
 ```
 
+## 运行最小交互式 Demo
+
+填写 `.env` 后，在项目根目录运行：
+
+```powershell
+python -m local_dev_agent
+```
+
+程序会创建一个本地 Session，并对每条终端输入创建一个 Run。输入 `q`、
+`exit` 或空行可退出；运行状态和日志分别保存在 `var/state/`、`var/logs/`。
+当前 Demo 仅提供模型文本对话，真实工具会在下一小步注册。
+
 ## 常用命令
 
 ```powershell

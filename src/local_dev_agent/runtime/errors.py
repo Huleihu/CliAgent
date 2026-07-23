@@ -17,3 +17,11 @@ class UnsupportedModelResponseError(ValueError):
             f"最小 Agent Loop 暂不支持停止原因“{stop_reason}”对应的模型响应。"
         )
         self.stop_reason = stop_reason
+
+
+class AgentLoopExhaustedError(ValueError):
+    """当 Agent Loop 达到允许的最大模型调用轮次时抛出。"""
+
+    def __init__(self, *, max_turns: int) -> None:
+        super().__init__(f"Agent Loop 已达到最大模型调用轮次“{max_turns}”。")
+        self.max_turns = max_turns

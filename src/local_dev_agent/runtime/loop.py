@@ -1,4 +1,4 @@
-"""只处理纯文本完成路径的最小 Agent Loop。"""
+"""有界 Agent Loop：模型调用、工具执行与结果回填。"""
 
 from __future__ import annotations
 
@@ -6,16 +6,29 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 import logging
 
-from local_dev_agent.domain.state import RunState, RunStatus, SessionState, StepState, StepStatus
+from local_dev_agent.domain.state import (
+    RunState,
+    RunStatus,
+    SessionState,
+    StepState,
+    StepStatus,
+    StepType,
+)
 from local_dev_agent.models import (
+    MessageRole,
     ModelClient,
+    ModelMessage,
     ModelRequest,
     ModelResponse,
     StopReason,
+    ToolResultBlock,
+    ToolUseBlock,
 )
 from local_dev_agent.storage.ports import StateRepository
+from local_dev_agent.tools import ToolCallRequest, ToolExecutor, ToolRegistry
+from local_dev_agent.tools.schema import ToolCallResult
 
-from .errors import UnsupportedModelResponseError
+from .errors import AgentLoopExhaustedError, UnsupportedModelResponseError
 from .input_service import RuntimeStartResult
 
 logger = logging.getLogger(__name__)
@@ -23,20 +36,33 @@ logger = logging.getLogger(__name__)
 
 @dataclass(frozen=True, slots=True)
 class AgentLoopResult:
-    """纯文本执行路径结束后可交给调用方渲染的结果。"""
+    """一次 Agent Loop 成功结束后的状态快照、最终响应和步骤历史。"""
 
     session: SessionState
     run: RunState
     step: StepState
     response: ModelResponse
+    steps: tuple[StepState, ...] = ()
 
 
 class MinimalAgentLoop:
-    """驱动单个规划步骤完成一次确定性纯文本模型调用。"""
+    """驱动有界的模型—工具—结果回填循环，直到模型完成任务。"""
 
-    def __init__(self, repository: StateRepository, model: ModelClient) -> None:
+    def __init__(
+        self,
+        repository: StateRepository,
+        model: ModelClient,
+        registry: ToolRegistry | None = None,
+        *,
+        max_turns: int = 10,
+    ) -> None:
+        if max_turns < 1:
+            raise ValueError("Agent Loop 的最大模型调用轮次必须大于或等于 1。")
         self._repository = repository
         self._model = model
+        self._registry = registry or ToolRegistry()
+        self._executor = ToolExecutor(self._registry)
+        self._max_turns = max_turns
 
     def execute(
         self,
@@ -44,7 +70,7 @@ class MinimalAgentLoop:
         *,
         occurred_at: datetime | None = None,
     ) -> AgentLoopResult:
-        """推进 Run 与 Step，调用模型并在成功后释放会话的活跃 Run。"""
+        """持续执行模型和工具，直到得到最终文本或耗尽允许轮次。"""
 
         timestamp = occurred_at or datetime.now(timezone.utc)
         log_context = {
@@ -54,63 +80,209 @@ class MinimalAgentLoop:
             "step_id": start.first_step.step_id,
         }
         logger.info("运行开始恢复。", extra=log_context)
-        recovering_run = start.run.transition_to(
-            RunStatus.RECOVERING,
-            occurred_at=timestamp,
+        running_run = self._start_run(start.run, timestamp)
+        current_step = self._start_step(start.first_step, timestamp)
+        completed_steps: list[StepState] = []
+        conversation = list(
+            ModelRequest(
+                session_id=start.session.session_id,
+                run_id=running_run.run_id,
+                user_input=start.event.content,
+            ).conversation
         )
+
+        for turn_number in range(1, self._max_turns + 1):
+            response = self._generate(
+                session_id=start.session.session_id,
+                run_id=running_run.run_id,
+                conversation=tuple(conversation),
+                log_context=log_context,
+            )
+            conversation.append(
+                ModelMessage(role=MessageRole.ASSISTANT, content=response.content)
+            )
+            tool_blocks = tuple(
+                block for block in response.content if isinstance(block, ToolUseBlock)
+            )
+
+            if tool_blocks:
+                current_step = self._succeed_step(current_step, timestamp)
+                completed_steps.append(current_step)
+                tool_results, tool_steps = self._execute_tools(
+                    run_id=running_run.run_id,
+                    tool_blocks=tool_blocks,
+                    timestamp=timestamp,
+                    log_context=log_context,
+                )
+                completed_steps.extend(tool_steps)
+                conversation.append(
+                    ModelMessage(role=MessageRole.USER, content=tool_results)
+                )
+
+                if turn_number == self._max_turns:
+                    exhausted_run = running_run.transition_to(
+                        RunStatus.EXHAUSTED,
+                        occurred_at=timestamp,
+                        reason="达到 Agent Loop 最大模型调用轮次。",
+                    )
+                    self._repository.save_run(exhausted_run)
+                    available_session = start.session.finish_run(
+                        exhausted_run.run_id,
+                        occurred_at=timestamp,
+                    )
+                    self._repository.save_session(available_session)
+                    logger.warning("运行已耗尽最大模型调用轮次。", extra=log_context)
+                    raise AgentLoopExhaustedError(max_turns=self._max_turns)
+
+                current_step = self._create_and_start_step(
+                    run_id=running_run.run_id,
+                    step_type=StepType.MODEL,
+                    timestamp=timestamp,
+                )
+                continue
+
+            if response.stop_reason is not StopReason.END_TURN or not response.text_blocks:
+                logger.warning("模型响应需要尚未实现的处理分支。", extra=log_context)
+                raise UnsupportedModelResponseError(stop_reason=response.stop_reason)
+
+            current_step = self._succeed_step(current_step, timestamp)
+            completed_steps.append(current_step)
+            completed_run = running_run.transition_to(
+                RunStatus.COMPLETED,
+                occurred_at=timestamp,
+            )
+            self._repository.save_run(completed_run)
+            available_session = start.session.finish_run(
+                completed_run.run_id,
+                occurred_at=timestamp,
+            )
+            self._repository.save_session(available_session)
+            logger.info("运行已完成。", extra=log_context)
+            return AgentLoopResult(
+                session=available_session,
+                run=completed_run,
+                step=current_step,
+                response=response,
+                steps=tuple(completed_steps),
+            )
+
+        raise AssertionError("最大轮次控制未覆盖所有循环分支。")
+
+    def _start_run(self, run: RunState, timestamp: datetime) -> RunState:
+        recovering_run = run.transition_to(RunStatus.RECOVERING, occurred_at=timestamp)
         self._repository.save_run(recovering_run)
-
-        running_run = recovering_run.transition_to(
-            RunStatus.RUNNING,
-            occurred_at=timestamp,
-        )
+        running_run = recovering_run.transition_to(RunStatus.RUNNING, occurred_at=timestamp)
         self._repository.save_run(running_run)
+        return running_run
 
-        executing_step = start.first_step.transition_to(
-            StepStatus.EXECUTING,
-            occurred_at=timestamp,
-        )
+    def _start_step(self, step: StepState, timestamp: datetime) -> StepState:
+        executing_step = step.transition_to(StepStatus.EXECUTING, occurred_at=timestamp)
         self._repository.save_step(executing_step)
+        return executing_step
 
+    def _create_and_start_step(
+        self,
+        *,
+        run_id: str,
+        step_type: StepType,
+        timestamp: datetime,
+    ) -> StepState:
+        pending_step = StepState.create(
+            run_id=run_id,
+            step_type=step_type,
+            created_at=timestamp,
+        )
+        self._repository.save_step(pending_step)
+        return self._start_step(pending_step, timestamp)
+
+    def _generate(
+        self,
+        *,
+        session_id: str,
+        run_id: str,
+        conversation: tuple[ModelMessage, ...],
+        log_context: dict[str, str],
+    ) -> ModelResponse:
         logger.info("开始模型调用。", extra=log_context)
         try:
             response = self._model.generate(
-                ModelRequest(
-                    session_id=start.session.session_id,
-                    run_id=running_run.run_id,
-                    user_input=start.event.content,
+                ModelRequest.from_messages(
+                    session_id=session_id,
+                    run_id=run_id,
+                    messages=conversation,
+                    tools=self._registry.list_definitions(),
                 )
             )
         except Exception:
             logger.error("模型调用失败。", exc_info=True, extra=log_context)
             raise
         logger.info("模型调用完成。", extra=log_context)
-        if response.stop_reason is not StopReason.END_TURN or not response.text_blocks:
-            logger.warning("模型响应需要尚未实现的处理分支。", extra=log_context)
-            raise UnsupportedModelResponseError(stop_reason=response.stop_reason)
+        return response
 
-        succeeded_step = executing_step.transition_to(
-            StepStatus.SUCCEEDED,
+    def _execute_tools(
+        self,
+        *,
+        run_id: str,
+        tool_blocks: tuple[ToolUseBlock, ...],
+        timestamp: datetime,
+        log_context: dict[str, str],
+    ) -> tuple[tuple[ToolResultBlock, ...], tuple[StepState, ...]]:
+        tool_results: list[ToolResultBlock] = []
+        tool_steps: list[StepState] = []
+        for block in tool_blocks:
+            tool_step = self._create_and_start_step(
+                run_id=run_id,
+                step_type=StepType.TOOL,
+                timestamp=timestamp,
+            )
+            logger.info(
+                "开始工具调用。",
+                extra={**log_context, "step_id": tool_step.step_id},
+            )
+            result = self._executor.execute(
+                ToolCallRequest(
+                    name=block.name,
+                    arguments=block.input,
+                    call_id=block.tool_use_id,
+                )
+            )
+            tool_steps.append(self._finish_tool_step(tool_step, result, timestamp))
+            tool_results.append(self._to_tool_result_block(block, result))
+        return tuple(tool_results), tuple(tool_steps)
+
+    def _finish_tool_step(
+        self,
+        step: StepState,
+        result: ToolCallResult,
+        timestamp: datetime,
+    ) -> StepState:
+        target_status = StepStatus.SUCCEEDED if result.success else StepStatus.FAILED
+        reason = None if result.success else "工具调用返回失败结果。"
+        completed_step = step.transition_to(
+            target_status,
+            reason=reason,
             occurred_at=timestamp,
         )
+        self._repository.save_step(completed_step)
+        return completed_step
+
+    def _succeed_step(self, step: StepState, timestamp: datetime) -> StepState:
+        succeeded_step = step.transition_to(StepStatus.SUCCEEDED, occurred_at=timestamp)
         self._repository.save_step(succeeded_step)
+        return succeeded_step
 
-        completed_run = running_run.transition_to(
-            RunStatus.COMPLETED,
-            occurred_at=timestamp,
-        )
-        self._repository.save_run(completed_run)
-
-        available_session = start.session.finish_run(
-            completed_run.run_id,
-            occurred_at=timestamp,
-        )
-        self._repository.save_session(available_session)
-        logger.info("运行已完成。", extra=log_context)
-
-        return AgentLoopResult(
-            session=available_session,
-            run=completed_run,
-            step=succeeded_step,
-            response=response,
+    @staticmethod
+    def _to_tool_result_block(
+        block: ToolUseBlock,
+        result: ToolCallResult,
+    ) -> ToolResultBlock:
+        if result.success:
+            return ToolResultBlock(
+                tool_use_id=block.tool_use_id,
+                content=dict(result.data or {}),
+            )
+        return ToolResultBlock(
+            tool_use_id=block.tool_use_id,
+            content={"error": dict(result.error or {})},
+            is_error=True,
         )

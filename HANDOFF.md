@@ -2,7 +2,7 @@
 
 ## 当前状态
 
-- 已完成 Phase 1 的第十四个教学式迭代：状态机、JSON 文件状态仓储、最小内部事件协议、Runtime 输入编排、内容块模型协议、纯文本 Agent Loop、统一 logging、受控工具框架、DeepSeek 真实模型适配与 Agent Loop 多轮工具声明/Provider 映射协议。
+- 已完成 Phase 1 的第十六个教学式迭代：状态机、JSON 文件状态仓储、最小内部事件协议、Runtime 输入编排、内容块模型协议、有界 Agent Loop、统一 logging、受控工具框架、DeepSeek 真实模型适配、多轮工具调用闭环与最小交互式启动入口。
 - 使用 Conda 环境 `local-dev-agent`（Python 3.13）。
 
 ## 已完成
@@ -63,15 +63,23 @@
 - 添加 DeepSeek 多轮请求序列化测试，覆盖用户文本、助手 `tool_use`、用户 `tool_result` 的顺序、字段和结构化 JSON 结果编码；本步不向模型声明工具，也不执行工具或修改 Agent Loop。
 - 继续改进版 `learnClaude/s01_agent_loop` 的第 3 小步：`ModelRequest` 现可携带现有 `ToolDefinition` 元组，DeepSeek Provider 仅在工具非空时将其转换为 Anthropic `tools` 声明；模型侧与执行侧复用同一份工具 schema，避免声明漂移。
 - 添加模型工具声明测试，覆盖请求保留工具定义与 DeepSeek `name`、`description`、`input_schema` 映射；本步仍不执行工具、不改变 Agent Loop。
+- 完成改进版 `learnClaude/s01_agent_loop` 的第 4 小步：`MinimalAgentLoop` 现按内容块检测 `ToolUseBlock`，从 `ToolRegistry` 导出工具定义，经 `ToolExecutor` 串行执行调用，追加 `ToolResultBlock` 后继续请求模型，直到收到最终文本。
+- 有界 Loop 默认最多进行 10 次模型调用；达到上限时将 Run 转为 `exhausted`、释放 Session 活跃 Run 并抛出中文错误，避免模型持续请求工具导致无限循环。
+- 每轮模型决策与每次工具执行均持久化 Step：首个既有 `PLAN` Step 表示首次模型决策，工具调用创建 `TOOL` Step，工具回填后的模型调用创建 `MODEL` Step。工具失败会形成 `is_error=True` 的结果块回填给模型，而非中断整个 Loop。
+- 添加 Agent Loop 单元测试，覆盖纯文本完成、工具执行与结果回填、多轮工具声明、工具失败回填和最大轮次耗尽；全部使用 Fake Model/Fake Tool，不访问真实 API。
+- 新增 `local_dev_agent.main` 与 `python -m local_dev_agent` 启动方式：启动时加载 `.env`、配置日志、创建 JSON 状态仓储与 DeepSeek Provider，并在终端循环中执行“用户输入 → UserInputRuntimeService.handle() → MinimalAgentLoop.execute() → 打印最终文本”。
+- 启动入口为同一进程复用一个 Session、每条输入创建一个独立 Run 的最小 s01 Demo；当前尚未跨 Run 保存或复用消息历史，也尚未注册真实工具，二者留给后续小步。
+- 添加启动入口连接测试，覆盖从终端输入编排函数到 Runtime 输入服务和 Agent Loop 的完整无网络连接。
+- 更新 README，说明 `python -m local_dev_agent` 的启动方式、退出命令和本地状态/日志目录。
 
 ## 验证
 
 - `anthropic`、`python-dotenv`、`pytest` 可在 Conda 环境中导入。
 - `ruff` 可运行。
 - 已人工核对 `TDD.md` 与 `AGENT_REQUIREMENTS_CHECKLIST.txt` 的 S01–S30 覆盖关系；本次仅修改文档，未运行代码测试。
-- `python -m pytest`：73 passed（覆盖状态机、JSON 文件状态仓储、最小内部事件协议、Runtime 输入编排、内容块模型协议、纯文本 Agent Loop、统一 logging、受控工具框架、DeepSeek Provider 与多轮工具声明/Provider 映射协议）。
+- `python -m pytest`：76 passed（覆盖状态机、JSON 文件状态仓储、最小内部事件协议、Runtime 输入编排、内容块模型协议、有界 Agent Loop、统一 logging、受控工具框架、DeepSeek Provider、多轮工具调用闭环与最小交互式启动入口）。
 - `python -m ruff check src tests`：通过。
 
 ## 下一步
 
-- 继续改进版 `learnClaude/s01_agent_loop` 的第 4 小步：实现有界 Agent Loop，按内容块检测 `ToolUseBlock`，经 `ToolExecutor` 执行并追加 `ToolResultBlock` 后继续调用模型，直到最终文本、失败或达到最大轮次；同步创建和持久化模型/工具 Step。
+- 继续改进版 `learnClaude/s01_agent_loop` 的第 5 小步：提供一个受工作区边界限制的只读文件列表工具，并由最小启动入口注册它，使用真实 DeepSeek 验证“模型请求工具 → Runtime 执行 → 结果回填 → 最终文本”的完整 s01 闭环；暂不开放 PowerShell 或文件写入能力。
