@@ -9,9 +9,12 @@ from local_dev_agent.models import (
     DeepSeekSettings,
 )
 from local_dev_agent.models.ports import (
+    MessageRole,
+    ModelMessage,
     ModelRequest,
     StopReason,
     TextBlock,
+    ToolResultBlock,
     ToolUseBlock,
 )
 
@@ -168,6 +171,73 @@ def test_model_client_maps_a_tool_use_response() -> None:
             input={"path": "README.md"},
         ),
     )
+
+
+def test_model_client_serializes_multi_turn_messages_and_tool_results() -> None:
+    client = FakeAnthropicClient(
+        FakeMessage(stop_reason="end_turn", content=[FakeTextContent("已完成。")])
+    )
+    request = ModelRequest.from_messages(
+        session_id="session-1",
+        run_id="run-1",
+        messages=(
+            ModelMessage(
+                role=MessageRole.USER,
+                content=(TextBlock("读取 README。"),),
+            ),
+            ModelMessage(
+                role=MessageRole.ASSISTANT,
+                content=(
+                    ToolUseBlock(
+                        tool_use_id="toolu-1",
+                        name="read_file",
+                        input={"path": "README.md"},
+                    ),
+                ),
+            ),
+            ModelMessage(
+                role=MessageRole.USER,
+                content=(
+                    ToolResultBlock(
+                        tool_use_id="toolu-1",
+                        content={"content": "项目说明"},
+                        is_error=False,
+                    ),
+                ),
+            ),
+        ),
+    )
+
+    DeepSeekAnthropicModelClient(_settings(), client=client).generate(request)
+
+    assert client.messages.calls[0]["messages"] == [
+        {
+            "role": "user",
+            "content": [{"type": "text", "text": "读取 README。"}],
+        },
+        {
+            "role": "assistant",
+            "content": [
+                {
+                    "type": "tool_use",
+                    "id": "toolu-1",
+                    "name": "read_file",
+                    "input": {"path": "README.md"},
+                }
+            ],
+        },
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "tool_result",
+                    "tool_use_id": "toolu-1",
+                    "content": '{"content": "项目说明"}',
+                    "is_error": False,
+                }
+            ],
+        },
+    ]
 
 
 def test_model_client_wraps_provider_failure_in_chinese_error() -> None:

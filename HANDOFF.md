@@ -2,7 +2,7 @@
 
 ## 当前状态
 
-- 已完成 Phase 1 的第十二个教学式迭代：状态机、JSON 文件状态仓储、最小内部事件协议、Runtime 输入编排、内容块模型协议、纯文本 Agent Loop、统一 logging、受控工具框架、DeepSeek 真实模型适配与 Agent Loop 多轮对话协议。
+- 已完成 Phase 1 的第十三个教学式迭代：状态机、JSON 文件状态仓储、最小内部事件协议、Runtime 输入编排、内容块模型协议、纯文本 Agent Loop、统一 logging、受控工具框架、DeepSeek 真实模型适配与 Agent Loop 多轮对话/Provider 映射协议。
 - 使用 Conda 环境 `local-dev-agent`（Python 3.13）。
 
 ## 已完成
@@ -59,15 +59,17 @@
 - 开始按 `learnClaude/s01_agent_loop` 的核心循环分步实现：新增不可变 `ModelMessage`、`MessageRole`、`ToolResultBlock` 与支持完整消息历史的 `ModelRequest`；用户消息、助手工具调用和工具结果的角色/内容组合均在协议层校验。
 - 保留 `ModelRequest(user_input=...)` 旧接口，并通过 `conversation` 属性规范化为首条用户消息，避免现有纯文本 Runtime、Fake Model 与 DeepSeek Provider 行为变化。
 - 添加多轮对话协议单元测试，覆盖旧接口兼容、多轮工具对话顺序、工具结果快照冻结、角色内容校验及上下文来源互斥。
+- 继续改进版 `learnClaude/s01_agent_loop` 的第 2 小步：DeepSeek Provider 现可将 `ModelRequest.conversation` 转换为 Anthropic 兼容的多轮 `messages`，并将 `ToolResultBlock` 转换为带调用关联和错误标识的 `tool_result` 内容块；旧单文本请求继续保持原始请求形态。
+- 添加 DeepSeek 多轮请求序列化测试，覆盖用户文本、助手 `tool_use`、用户 `tool_result` 的顺序、字段和结构化 JSON 结果编码；本步不向模型声明工具，也不执行工具或修改 Agent Loop。
 
 ## 验证
 
 - `anthropic`、`python-dotenv`、`pytest` 可在 Conda 环境中导入。
 - `ruff` 可运行。
 - 已人工核对 `TDD.md` 与 `AGENT_REQUIREMENTS_CHECKLIST.txt` 的 S01–S30 覆盖关系；本次仅修改文档，未运行代码测试。
-- `python -m pytest`：70 passed（覆盖状态机、JSON 文件状态仓储、最小内部事件协议、Runtime 输入编排、内容块模型协议、纯文本 Agent Loop、统一 logging、受控工具框架、DeepSeek Provider 与多轮对话协议）。
+- `python -m pytest`：71 passed（覆盖状态机、JSON 文件状态仓储、最小内部事件协议、Runtime 输入编排、内容块模型协议、纯文本 Agent Loop、统一 logging、受控工具框架、DeepSeek Provider 与多轮对话/Provider 映射协议）。
 - `python -m ruff check src tests`：通过。
 
 ## 下一步
 
-- 继续改进版 `learnClaude/s01_agent_loop` 的第 2 小步：让 DeepSeek Provider 将 `ModelRequest.conversation` 映射为 Anthropic messages，并映射 `ToolResultBlock`；本步尚不声明工具、不执行工具、不改变 Agent Loop。随后才接入工具定义和真正的有界 Agent Loop。
+- 继续改进版 `learnClaude/s01_agent_loop` 的第 3 小步：让模型请求可携带由 `ToolRegistry` 导出的工具定义，并让 DeepSeek Provider 映射到 Anthropic `tools`；本步仍不执行工具、不改变 Agent Loop。随后才实现有界 Agent Loop 与 `ToolExecutor` 的闭环。

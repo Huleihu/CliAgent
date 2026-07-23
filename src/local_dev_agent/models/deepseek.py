@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 import anthropic
@@ -9,10 +10,12 @@ import anthropic
 from .deepseek_settings import DeepSeekSettings
 from .ports import (
     ModelContentBlock,
+    ModelMessage,
     ModelRequest,
     ModelResponse,
     StopReason,
     TextBlock,
+    ToolResultBlock,
     ToolUseBlock,
 )
 
@@ -34,16 +37,55 @@ class DeepSeekAnthropicModelClient:
     def generate(self, request: ModelRequest) -> ModelResponse:
         """调用 DeepSeek，并将兼容响应转换为内部内容块协议。"""
 
+        messages = self._map_request_messages(request)
         try:
             response = self._client.messages.create(
                 model=self._settings.model,
                 max_tokens=self._settings.max_tokens,
-                messages=[{"role": "user", "content": request.user_input}],
+                messages=messages,
             )
         except Exception as error:
             raise DeepSeekModelError("DeepSeek 模型调用失败。") from error
 
         return self._map_response(response)
+
+    def _map_request_messages(self, request: ModelRequest) -> list[dict[str, object]]:
+        """将内部消息协议转换为 Anthropic 兼容接口的 messages 字段。"""
+
+        if not request.messages:
+            return [{"role": "user", "content": request.user_input}]
+        return [self._map_message(message) for message in request.conversation]
+
+    @classmethod
+    def _map_message(cls, message: ModelMessage) -> dict[str, object]:
+        """转换单条消息，保留同一消息内内容块的原始顺序。"""
+
+        return {
+            "role": message.role.value,
+            "content": [cls._map_request_content_block(block) for block in message.content],
+        }
+
+    @staticmethod
+    def _map_request_content_block(block: object) -> dict[str, object]:
+        """转换文本、工具调用和工具结果，拒绝未支持的内部内容块。"""
+
+        if isinstance(block, TextBlock):
+            return {"type": "text", "text": block.text}
+        if isinstance(block, ToolUseBlock):
+            return {
+                "type": "tool_use",
+                "id": block.tool_use_id,
+                "name": block.name,
+                "input": dict(block.input),
+            }
+        if isinstance(block, ToolResultBlock):
+            return {
+                "type": "tool_result",
+                "tool_use_id": block.tool_use_id,
+                "content": json.dumps(dict(block.content), ensure_ascii=False),
+                "is_error": block.is_error,
+            }
+        raise DeepSeekModelError("模型请求包含不受支持的内容块。")
 
     def _map_response(self, response: Any) -> ModelResponse:
         try:
