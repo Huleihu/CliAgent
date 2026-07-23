@@ -2,7 +2,7 @@
 
 ## 当前状态
 
-- 已完成 Phase 1 的第九个教学式迭代：状态机、JSON 文件状态仓储、最小内部事件协议、Runtime 输入编排、内容块模型协议、纯文本 Agent Loop 与统一 logging。
+- 已完成 Phase 1 的第十个教学式迭代：状态机、JSON 文件状态仓储、最小内部事件协议、Runtime 输入编排、内容块模型协议、纯文本 Agent Loop、统一 logging 与受控工具框架。
 - 使用 Conda 环境 `local-dev-agent`（Python 3.13）。
 
 ## 已完成
@@ -48,15 +48,19 @@
 - 将内部 `ModelResponse` 升级为与 Provider 解耦的内容块协议：包含 `stop_reason`、多个 `TextBlock` / `ToolUseBlock`，并提供文本完成的便捷构造方法；`ToolUseBlock` 保留调用标识、工具名称与冻结后的顶层参数映射。
 - `FakeModel` 改为返回预设的规范化 `ModelResponse`；`MinimalAgentLoop` 仅在 `end_turn` 且含文本块时完成 Run，收到 `tool_use` 等未实现分支时记录 WARNING 并拒绝将 Run/Step 标记为成功。
 - 添加内容块模型协议与工具调用安全分支测试，覆盖多文本块、工具调用结构、工具参数顶层不可变、非法停止原因组合，以及未执行工具调用不得完成 Run。
+- 新增 `local_dev_agent.tools` 工具框架：以稳定 `Tool` 端口隔离工具实现；`ToolDefinition`、`ToolCallRequest`、`ToolCallResult` 提供不可变、JSON 原生值约束的调用契约，并保留 `call_id` 以对接后续 `ToolUseBlock.tool_use_id`。
+- 实现 `ToolRegistry`、`FunctionTool`、`FakeTool` 与 `ToolExecutor`：执行器统一处理工具查找、必填参数校验、异常收束和耗时统计，将预期失败转换为结构化 `ToolCallResult`，不让工具异常直接进入 Agent Loop。
+- 实现受控 `ToolDiscovery`：仅扫描代码显式指定 Python 包的直接子模块，发现公开的 `Tool` 实例或 `create_tool` 工厂；拒绝任意路径扫描、递归扫描、重复工具名、无效工厂和导入失败。
+- 添加工具框架单元测试，覆盖成功执行与调用标识透传、缺失参数、未知工具、工具异常、非法返回值、注册去重、顶层参数冻结，以及实例/工厂动态发现和发现失败。
 
 ## 验证
 
 - `anthropic`、`python-dotenv`、`pytest` 可在 Conda 环境中导入。
 - `ruff` 可运行。
 - 已人工核对 `TDD.md` 与 `AGENT_REQUIREMENTS_CHECKLIST.txt` 的 S01–S30 覆盖关系；本次仅修改文档，未运行代码测试。
-- `python -m pytest`：50 passed（覆盖状态机、JSON 文件状态仓储、最小内部事件协议、Runtime 输入编排、内容块模型协议、纯文本 Agent Loop 与统一 logging）。
+- `python -m pytest`：58 passed（覆盖状态机、JSON 文件状态仓储、最小内部事件协议、Runtime 输入编排、内容块模型协议、纯文本 Agent Loop、统一 logging 与受控工具框架）。
 - `python -m ruff check src tests`：通过。
 
 ## 下一步
 
-- 检查通过后，继续 Phase 1 的下一个小步：定义最小 Tool 协议与 Fake Tool，为 `ToolUseBlock` 的安全执行、结果回填与后续 Permission 管线建立边界。
+- 检查通过后，继续 Phase 1 的下一个小步：让 Agent Loop 将 `ToolUseBlock` 转换为 `ToolCallRequest` 并调用 `ToolExecutor`；随后定义工具结果内容块和可续接的模型请求上下文，以完成结果回填闭环。Permission 管线仍保持为后续独立步骤。
