@@ -2,7 +2,7 @@
 
 ## 当前状态
 
-- 已完成 Phase 1 的第六个教学式迭代：状态机、JSON 文件状态仓储、最小内部事件协议与 Runtime 输入编排。
+- 已完成 Phase 1 的第七个教学式迭代：状态机、JSON 文件状态仓储、最小内部事件协议、Runtime 输入编排与纯文本 Agent Loop。
 - 使用 Conda 环境 `local-dev-agent`（Python 3.13）。
 
 ## 已完成
@@ -39,15 +39,18 @@
 - 更新 `.gitignore`：忽略 pytest 异常临时缓存目录，减少本地文件树噪音。
 - 实现 `UserInputRuntimeService`：消费已关联既有 Session 的 `UserInputEvent`，创建排队中的 `RunState` 与待执行的规划 `StepState`，再将 Run、Step、激活后的 Session 依次保存到 JSON 仓储。
 - 新增最小 Runtime 编排单元测试，覆盖状态创建与持久化、缺失 Session 的中文错误，以及活跃 Run 存在时拒绝并发用户输入。
+- 定义可替换的 `ModelClient`、`ModelRequest` 与 `ModelResponse` 端口，并实现不访问外部服务的确定性 `FakeModel`。
+- 实现 `MinimalAgentLoop` 纯文本完成路径：Run 依次经过恢复、运行和完成；规划 Step 依次经过执行和成功；完成后释放 Session 的活跃 Run，所有状态变更均保存到 JSON 仓储。
+- 添加 Fake Model 与最小 Agent Loop 单元测试，覆盖模型请求与固定响应、完整状态迁移、JSON 持久化和会话释放。
 
 ## 验证
 
 - `anthropic`、`python-dotenv`、`pytest` 可在 Conda 环境中导入。
 - `ruff` 可运行。
 - 已人工核对 `TDD.md` 与 `AGENT_REQUIREMENTS_CHECKLIST.txt` 的 S01–S30 覆盖关系；本次仅修改文档，未运行代码测试。
-- `python -m pytest`：39 passed（覆盖状态机、JSON 文件状态仓储、最小内部事件协议与 Runtime 输入编排）。
+- `python -m pytest`：42 passed（覆盖状态机、JSON 文件状态仓储、最小内部事件协议、Runtime 输入编排与纯文本 Agent Loop）。
 - `python -m ruff check src tests`：通过。
 
 ## 下一步
 
-- 检查通过后，继续 Phase 1 的下一个小步：实现 Fake Model 与最小 Agent Loop 的纯文本完成路径，使规划 Step 和 Run 能进入成功终态。
+- 检查通过后，继续 Phase 1 的下一个小步：增加统一的 Python `logging` 配置，记录 Runtime 与 Agent Loop 的关键生命周期事件。
