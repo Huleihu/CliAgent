@@ -4,12 +4,15 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
+import logging
 
 from local_dev_agent.domain.state import RunState, RunStatus, SessionState, StepState, StepStatus
 from local_dev_agent.models import ModelClient, ModelRequest, ModelResponse
 from local_dev_agent.storage.ports import StateRepository
 
 from .input_service import RuntimeStartResult
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -38,6 +41,13 @@ class MinimalAgentLoop:
         """推进 Run 与 Step，调用模型并在成功后释放会话的活跃 Run。"""
 
         timestamp = occurred_at or datetime.now(timezone.utc)
+        log_context = {
+            "event_id": start.event.event_id,
+            "session_id": start.session.session_id,
+            "run_id": start.run.run_id,
+            "step_id": start.first_step.step_id,
+        }
+        logger.info("运行开始恢复。", extra=log_context)
         recovering_run = start.run.transition_to(
             RunStatus.RECOVERING,
             occurred_at=timestamp,
@@ -56,13 +66,19 @@ class MinimalAgentLoop:
         )
         self._repository.save_step(executing_step)
 
-        response = self._model.generate(
-            ModelRequest(
-                session_id=start.session.session_id,
-                run_id=running_run.run_id,
-                user_input=start.event.content,
+        logger.info("开始模型调用。", extra=log_context)
+        try:
+            response = self._model.generate(
+                ModelRequest(
+                    session_id=start.session.session_id,
+                    run_id=running_run.run_id,
+                    user_input=start.event.content,
+                )
             )
-        )
+        except Exception:
+            logger.error("模型调用失败。", exc_info=True, extra=log_context)
+            raise
+        logger.info("模型调用完成。", extra=log_context)
 
         succeeded_step = executing_step.transition_to(
             StepStatus.SUCCEEDED,
@@ -81,6 +97,7 @@ class MinimalAgentLoop:
             occurred_at=timestamp,
         )
         self._repository.save_session(available_session)
+        logger.info("运行已完成。", extra=log_context)
 
         return AgentLoopResult(
             session=available_session,

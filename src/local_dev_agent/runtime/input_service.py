@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import logging
 
 from local_dev_agent.domain.messages import UserInputEvent
 from local_dev_agent.domain.state import RunState, SessionState, StepState, StepType
 from local_dev_agent.storage.ports import StateRepository
 
 from .errors import SessionNotFoundError
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -30,8 +33,22 @@ class UserInputRuntimeService:
     def handle(self, event: UserInputEvent) -> RuntimeStartResult:
         """消费输入事件，创建并持久化一轮尚未执行的运行。"""
 
+        logger.info(
+            "已接收用户输入。",
+            extra={
+                "event_id": event.event_id,
+                "session_id": event.session_id,
+            },
+        )
         session = self._repository.get_session(event.session_id)
         if session is None:
+            logger.error(
+                "找不到用户输入事件关联的会话。",
+                extra={
+                    "event_id": event.event_id,
+                    "session_id": event.session_id,
+                },
+            )
             raise SessionNotFoundError(session_id=event.session_id)
 
         run = RunState.create(session_id=session.session_id, created_at=event.occurred_at)
@@ -46,6 +63,15 @@ class UserInputRuntimeService:
         self._repository.save_run(run)
         self._repository.save_step(first_step)
         self._repository.save_session(active_session)
+        logger.info(
+            "已创建并保存运行与规划步骤。",
+            extra={
+                "event_id": event.event_id,
+                "session_id": active_session.session_id,
+                "run_id": run.run_id,
+                "step_id": first_step.step_id,
+            },
+        )
 
         return RuntimeStartResult(
             event=event,
