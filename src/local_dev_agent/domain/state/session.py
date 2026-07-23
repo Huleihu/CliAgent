@@ -10,7 +10,12 @@ from uuid import uuid4
 from .errors import InvalidSessionTransitionError
 from .timestamps import normalize_utc_timestamp
 
-
+# created：会话已创建，尚未开始运行。
+# active：会话可处理 Run，可能正在执行或处于两次 Run 之间。
+# suspended：会话暂停，可恢复为 active。
+# archived：会话已归档，终态。
+# corrupted：发现状态或恢复数据损坏，等待后续人工修复，终态。
+# needs_migration：状态数据需要迁移，等待后续迁移流程，终态。
 class SessionStatus(StrEnum):
     """会话从创建到归档或人工处理可处于的状态。"""
 

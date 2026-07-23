@@ -2,7 +2,7 @@
 
 ## 当前状态
 
-- 已完成 Phase 1 的前三个教学式迭代：可测试的 `SessionState`、`RunState` 与 `StepState` 生命周期状态机。
+- 已完成 Phase 1 的第四个教学式迭代：状态机与可检查的 JSON 文件状态仓储。
 - 使用 Conda 环境 `local-dev-agent`（Python 3.13）。
 
 ## 已完成
@@ -29,15 +29,20 @@
 - 实现 `SessionState`、`SessionStatus` 与会话生命周期迁移历史，覆盖 `created → active ↔ suspended → archived`，以及等待人工处理的 `corrupted`、`needs_migration` 终态。
 - 建立 `Session → Run → Step` 的状态关联边界：Session 仅保存 `active_run_id`，Run 继续通过 `session_id` 归属会话，Step 继续通过 `run_id` 归属运行；完整 Run 历史留给后续 Repository 查询，避免重复快照状态。
 - 添加会话状态机单元测试，覆盖会话生命周期、顺序关联多个 Run、活跃 Run 排他性、活跃 Run 与会话迁移互斥、非法跳转、终态保护、不可变性与中文时间校验。
+- 定义 `StateRepository` 存储端口，并实现 `JsonFileStateRepository`：Session、Run、Step 分别写入 `var/state/sessions/`、`var/state/runs/`、`var/state/steps/` 下的可读 JSON 文件。
+- 新增带 `schema_version` 的 JSON 编解码模块，完整保存状态转换历史与 UTC 时间戳；JSON 文件采用临时文件加原子替换写入，避免中断后留下半截快照。
+- JSON 仓储按 `state_version` 执行乐观锁校验，拒绝旧快照覆盖新版本；支持按 `session_id` 查询 Run、按 `run_id` 查询 Step，并将 `var/` 加入 Git 忽略规则。
+- 添加 JSON 状态仓储单元测试，覆盖跨 Repository 实例恢复、层级查询、版本冲突、可读文件结构、缺失状态、损坏文件中文错误与转换历史恢复。
+- 将 pytest 临时目录固定为工作区内且已忽略的 `.pytest-tmp/`，避免测试依赖系统临时目录权限。
 
 ## 验证
 
 - `anthropic`、`python-dotenv`、`pytest` 可在 Conda 环境中导入。
 - `ruff` 可运行。
 - 已人工核对 `TDD.md` 与 `AGENT_REQUIREMENTS_CHECKLIST.txt` 的 S01–S30 覆盖关系；本次仅修改文档，未运行代码测试。
-- `python -m pytest`：23 passed（覆盖 Session、Run 与 Step 状态机）。
+- `python -m pytest`：30 passed（覆盖状态机与 JSON 文件状态仓储）。
 - `python -m ruff check src tests`：通过。
 
 ## 下一步
 
-- 检查通过后，继续 Phase 1 的下一个小步：定义最小内部 Message/Event 协议和内存 Fake Repository，为最小 Agent Loop 做准备。
+- 检查通过后，继续 Phase 1 的下一个小步：定义最小内部 Message/Event 协议，再由 Runtime 编排事件、状态仓储与后续 Fake Model。
