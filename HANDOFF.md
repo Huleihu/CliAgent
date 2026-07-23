@@ -2,7 +2,7 @@
 
 ## 当前状态
 
-- 已完成 Phase 1 的前两个教学式迭代：可测试的 `RunState` 与 `StepState` 生命周期状态机。
+- 已完成 Phase 1 的前三个教学式迭代：可测试的 `SessionState`、`RunState` 与 `StepState` 生命周期状态机。
 - 使用 Conda 环境 `local-dev-agent`（Python 3.13）。
 
 ## 已完成
@@ -26,16 +26,18 @@
 - 新增共享时间规范化模块，统一 Run 与 Step 的 UTC 转换和无时区时间拒绝规则；`RunState` 的外部行为保持不变。
 - 添加 Step 状态机单元测试，覆盖成功、等待恢复、不确定结果协调、非法跳转、终态保护、不可变性、中文错误信息与尝试次数校验。
 - 更新 `AGENTS.md`：每个已验证且边界清晰的教学式小步完成后，主动提醒用户可以提交并提供建议提交信息；未经用户明确要求不自动提交。
+- 实现 `SessionState`、`SessionStatus` 与会话生命周期迁移历史，覆盖 `created → active ↔ suspended → archived`，以及等待人工处理的 `corrupted`、`needs_migration` 终态。
+- 建立 `Session → Run → Step` 的状态关联边界：Session 仅保存 `active_run_id`，Run 继续通过 `session_id` 归属会话，Step 继续通过 `run_id` 归属运行；完整 Run 历史留给后续 Repository 查询，避免重复快照状态。
+- 添加会话状态机单元测试，覆盖会话生命周期、顺序关联多个 Run、活跃 Run 排他性、活跃 Run 与会话迁移互斥、非法跳转、终态保护、不可变性与中文时间校验。
 
 ## 验证
 
 - `anthropic`、`python-dotenv`、`pytest` 可在 Conda 环境中导入。
 - `ruff` 可运行。
 - 已人工核对 `TDD.md` 与 `AGENT_REQUIREMENTS_CHECKLIST.txt` 的 S01–S30 覆盖关系；本次仅修改文档，未运行代码测试。
-- `python -m pytest`：14 passed（覆盖 Run 与 Step 状态机）。
+- `python -m pytest`：23 passed（覆盖 Session、Run 与 Step 状态机）。
 - `python -m ruff check src tests`：通过。
 
 ## 下一步
 
-- 等待本次 `StepState` 设计与实现检查。
-- 检查通过后，继续 Phase 1 的下一个小步：实现 `SessionState`，建立会话与多个 Run 的长期关联边界。
+- 检查通过后，继续 Phase 1 的下一个小步：定义最小内部 Message/Event 协议和内存 Fake Repository，为最小 Agent Loop 做准备。

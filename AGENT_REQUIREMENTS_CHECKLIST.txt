@@ -1,0 +1,223 @@
+本地 CLI 开发 Agent：需求核对清单（草案）
+========================================
+
+目的
+----
+构建一个受 Claude Code 启发、在本地运行的开发 Agent，用真实开发任务逐步实现和理解 Agent Harness 的关键能力。
+
+这不是对 Claude Code 的完整复刻。以下能力需要纳入整体产品与架构，但可分阶段实现，不要求一次完成，也不要求逐项与参考实现完全一致。
+
+
+一、产品形态与核心循环
+----------------------
+1. 产品形态为本地 CLI Agent。
+2. 支持多轮连续对话，以 session 为边界维护上下文。
+3. 核心运行范式：
+
+   输入 / 运行时事件
+   -> 恢复 Session、Task、Checkpoint
+   -> 注入记忆、技能与必要运行状态
+   -> Plan（规划目标、步骤、约束）
+   -> Execute（调用模型与工具）
+   -> Observe（接收工具结果、异常、后台事件、测试结果、人工反馈）
+   -> Reflect / Verify（反思、验证、修正计划、重试、升级或结束）
+   -> Persist（保存状态、记忆、审计、Trace、Eval 数据）
+   -> 继续 / 等待人工 / 完成
+
+4. 模型负责理解、选择和推理；Harness 负责工具、状态、权限、上下文、事件、隔离和恢复。
+
+
+二、Agent Harness 能力范围
+-------------------------
+S01 Agent Loop
+- 模型调用、工具调用和 tool_result 回填形成循环本体。
+
+S02 Tool Use
+- 工具 schema、handler dispatch；新增工具时不重写主循环。
+
+S03 Permission
+- 对危险操作进行 allow / deny / approval；在工具执行前决策。
+
+S04 Hooks
+- 提供生命周期 Hook，将权限、日志、指标等横切逻辑与工具实现解耦。
+
+S05 TodoWrite
+- 提供会话内执行计划工具，帮助长任务保持焦点。
+
+S06 Subagent
+- 支持独立子循环与摘要返回，避免主上下文承载所有边角工作。
+
+S07 Skill Loading
+- 提供技能目录与按需加载，避免全部知识常驻上下文。
+
+S08 Context Compact
+- 在模型调用前及异常后，按策略压缩 messages 与工具结果，控制上下文预算。
+
+S09 Memory
+- 支持跨会话的选择、提取、索引与持久记忆；运行前注入、运行后沉淀。
+
+S10 System Prompt
+- System Prompt 按运行状态组装为多个 section，而不是固定字符串。
+
+S11 Error Recovery
+- 分类处理网络、限额、超时、上下文等异常；支持重试、降级和恢复。
+
+S12 Task System
+- 提供可跨会话持续推进的持久任务 DAG。
+
+S13 Background Tasks
+- 支持后台执行慢工具，并在完成后以运行时事件/通知回注入后续回合。
+
+S14 Cron
+- 支持定时器和触发队列，使部分任务无需等待用户显式触发。
+
+S15 Agent Teams
+- 支持 Lead、队友、独立上下文和邮箱通信。
+
+S16 Team Protocols
+- 支持 request-response 与 request_id 状态机，用于审批、关机等结构化协作。
+
+S17 Autonomous Agents
+- 队友在 IDLE 时扫描任务板、自主认领任务，完成后回到 IDLE。
+
+S18 Worktree Isolation
+- 将任务绑定到 Git worktree / branch，隔离多人/多 Agent 的文件修改。
+
+S19 MCP
+- 支持连接、发现和管理动态 MCP 工具池；在调用模型前组装工具。
+
+S20 Comprehensive
+- 为上述机制提供明确、统一的插入点，避免组合后互相破坏。
+
+
+三、规划、执行、反思与状态管理
+--------------------------------
+1. Plan / Execute 为明确的一等流程，而不只是隐含在模型提示词中。
+2. Reflect / Verify 为明确的一等流程：检查工具结果、测试结果和目标达成度，决定修正计划、重试、请求人工介入或完成。
+3. 统一状态管理，至少区分：
+   - 运行态：messages、当前计划、重试次数、模型/MCP 连接、执行中的工具。
+   - 持久态：任务 DAG、记忆、审批、后台任务、团队邮箱、审计记录、checkpoint。
+   - 文件态：工作区、Git 分支、worktree、代码变更、测试工件。
+4. 支持 context recovery：进程或 CLI 重启后，可从 checkpoint、会话摘要、当前计划、待审批项和任务状态继续。
+
+
+四、Human-in-the-loop
+---------------------
+1. 对危险工具调用、关键方案选择或其他策略指定动作支持人工介入。
+2. 人工可批准、拒绝或补充指令。
+3. 待处理动作进入 pending_approval 等可持久状态，等待后可恢复执行。
+4. 人工决策必须进入审计与 Trace。
+
+
+五、日志、可观测性、Trace 与审计
+----------------------------------
+1. 必须提供供开发调试使用的日志系统。
+2. 日志输出到控制台和滚动日志文件；支持 DEBUG / INFO / WARNING / ERROR。
+3. 支持 --log-level debug 等详细日志模式。
+4. 日志、Trace 与 Audit 职责分离：
+   - Log：实时调试与排障。
+   - Trace：还原单次 Agent 运行的完整执行链路。
+   - Audit：追溯权限判断、审批、人为干预和高风险操作。
+5. 记录模型调用、工具调用结果、异常、重试、耗时、Token 消耗和成本估算。
+6. 关键事件应可关联，至少具备：
+   trace_id、session_id、task_id、agent_id、tool_call_id、timestamp、event_type、duration_ms、token_usage。
+7. 记录输入/输出摘要、异常信息、审批状态和最终结果。
+8. 对密钥、.env 内容和敏感参数脱敏；工具输出可截断，完整结果作为 Trace/工件保存。
+9. 日志目录应加入 .gitignore。
+
+
+六、Agent Eval 数据
+-------------------
+1. 为 Agent Eval 提供可追溯、可关联的链路数据。
+2. 至少保留：用户输入、Prompt 快照、模型输出、工具调用轨迹、tool_result、最终结果、人工反馈/评分。
+3. 支持事后分析与必要时的重放，用于比较 Prompt、模型或 Harness 改动前后的效果。
+4. 能回答：任务为何失败、失败发生在哪个环节、耗时/Token 如何、改动后成功率是否改善。
+
+
+七、横切安全与工程要求
+----------------------
+1. 安全策略除命令拦截外，还应覆盖路径、网络、密钥脱敏、超时、资源限制和人工审批。
+2. 提供结构化日志、运行事件、工具调用审计、Token/成本/耗时指标。
+3. 保持模块化、解耦和可扩展性；工具、配置和运行时能力应可替换、可新增。
+4. 设计模式按需使用，优先简单、可读实现；公共接口、关键决策和非显然逻辑需要解释“为什么”的注释。
+5. 每次实质性变更后更新 HANDOFF.md；Git 提交使用中文 Conventional Commits 格式。
+
+
+八、工程化增强能力（S21-S30）
+-------------------------------
+S21 Message / Event Protocol
+- 建立统一的内部通信协议，避免组件之间直接传递无结构字符串。
+- 包含 Message Schema、Agent Event Schema、Tool Call Schema、Tool Result Schema、Event ID 与 Trace ID 关联。
+- 用于 checkpoint、replay、trace、eval 与状态恢复。
+
+S22 Prompt Management
+- 以 Prompt Template、Section 和 Version 管理动态 Prompt 组装，避免 System Prompt 写死。
+- 支持 Prompt Snapshot、Diff 与 A/B Test。
+- 支持不同任务加载不同 Prompt、Prompt 效果评估和历史运行复现。
+
+S23 Model Provider Layer
+- 提供 LLM Client 抽象接口与 Model Config。
+- 可接入 OpenAI、Anthropic、Gemini 等 Provider。
+- 支持多模型切换、Model Fallback、Model Routing 与成本优化。
+
+S24 Tool Registry
+- 统一管理 Tool 注册、发现、Schema、生命周期、版本与状态。
+- 支持动态添加工具、MCP 工具接入与工具权限控制。
+
+S25 Context Manager
+- 统一负责 Token 预算、Message 裁剪、Context 压缩、Summary 生成、相关上下文检索与 Context Assembly。
+- 支持长对话、长任务执行和模型输入成本控制。
+
+S26 Knowledge Retrieval / RAG
+- 支持文档加载、切片、Embedding、向量数据库、Retrieval 与 Rerank。
+- 面向企业知识库问答、私有数据查询和长期知识增强。
+
+S27 Identity & Isolation
+- 支持 User Identity、Tenant Identity、Session 隔离、Memory 隔离与 Tool 权限隔离。
+- 面向多用户、多任务、多租户场景的数据安全与隔离。
+
+S28 Configuration System
+- 统一管理环境、模型、工具、Agent 参数和 Secret 配置。
+- 支持 dev、test、production 等不同运行配置。
+
+S29 Agent Testing Framework
+- 建立单元测试：ToolExecutor、Permission、State 等。
+- 建立集成测试：Agent 完整流程。
+- 建立回归测试：Prompt 修改前后的效果比较。
+- Eval 指标至少包含成功率、Token 消耗、延迟与成本。
+
+S30 Agent Serving
+- 从 CLI 演进到生产服务时，支持 API Server、Session API、Agent Worker、Task Queue、Docker 部署和服务监控。
+- 支持 Web 调用、多用户访问和后台任务执行。
+
+
+九、Agent 应用开发完整能力地图
+-------------------------------
+基础运行：S01 Agent Loop、S02 Tool Use、S03 Permission、S04 Hooks、S05 TodoWrite。
+
+Agent 能力：S06 Subagent、S07 Skill Loading、S08 Context Compact、S09 Memory、S10 System Prompt。
+
+可靠性：S11 Error Recovery、S12 Task System、S13 Background Tasks、S14 Cron。
+
+协作：S15 Agent Teams、S16 Team Protocols、S17 Autonomous Agents、S18 Worktree Isolation。
+
+扩展：S19 MCP、S20 Comprehensive Architecture。
+
+工程化增强：S21 Message/Event Protocol、S22 Prompt Management、S23 Model Provider、S24 Tool Registry、S25 Context Manager、S26 RAG、S27 Identity & Isolation、S28 Configuration、S29 Testing/Eval、S30 Serving。
+
+
+十、暂不要求一次完成
+----------------------
+- 不要求完整复刻 Claude Code。
+- 不要求在第一阶段实现全部 S01-S20。
+- 不要求在第一阶段实现全部 S21-S30。
+- 先确保基础 CLI、Agent Loop、工具、权限、日志与状态边界可靠，再逐步演进到记忆、异步、协作、MCP、RAG、服务化和生产能力。
+
+
+待你核对的问题
+----------------
+1. 是否需要支持多个模型供应商，还是第一阶段只接入 Anthropic？
+2. 是否需要支持 Windows PowerShell 之外的 shell（例如 bash）？
+3. 首个可交付版本是否必须实现文件写入、命令执行和人工审批？
+4. Trace、审计与 Eval 数据第一阶段保存为本地 JSONL/SQLite，还是已有偏好的存储方式？
+5. 是否需要 Web UI，还是 CLI 为唯一交互界面？

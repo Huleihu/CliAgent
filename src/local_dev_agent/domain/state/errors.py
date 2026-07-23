@@ -15,6 +15,26 @@ class InvalidRunTransitionError(ValueError):
         self.target_status = target_status
 
 
+class InvalidSessionTransitionError(ValueError):
+    """当一个会话尝试进入其生命周期不允许的状态时抛出。"""
+
+    def __init__(
+        self,
+        *,
+        session_id: str,
+        source_status: str,
+        target_status: str,
+    ) -> None:
+        message = (
+            f"会话“{session_id}”不能从状态“{source_status}”"
+            f"跳转到“{target_status}”。"
+        )
+        super().__init__(message)
+        self.session_id = session_id
+        self.source_status = source_status
+        self.target_status = target_status
+
+
 class InvalidStepTransitionError(ValueError):
     """当一个步骤尝试进入其生命周期不允许的状态时抛出。"""
 
