@@ -47,6 +47,7 @@ def test_create_tool_registry_registers_the_read_only_file_listing_tool(tmp_path
     assert [definition.name for definition in registry.list_definitions()] == [
         "list_files",
         "read_file",
+        "write_file",
     ]
 
 
