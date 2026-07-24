@@ -1,5 +1,6 @@
 """工具调用的安全执行边界。"""
 
+import logging
 from time import perf_counter
 
 from local_dev_agent.hooks import (
@@ -7,6 +8,7 @@ from local_dev_agent.hooks import (
     HookExecutionError,
     HookEvent,
     HookRunner,
+    PostToolUseContext,
     PreToolUseContext,
 )
 
@@ -19,6 +21,8 @@ from .errors import (
 )
 from .registry import ToolRegistry
 from .schema import ToolCallRequest, ToolCallResult
+
+logger = logging.getLogger(__name__)
 
 
 class ToolExecutor:
@@ -50,13 +54,6 @@ class ToolExecutor:
                 arguments=request.arguments,
             )
             self._trigger_pre_tool_use(request, pre_tool_context)
-            data = tool.run(request.arguments)
-            return ToolCallResult.succeeded(
-                name=request.name,
-                data=data,
-                duration_ms=self._elapsed_ms(started_at),
-                call_id=request.call_id,
-            )
         except (
             HookExecutionError,
             ToolNotFoundError,
@@ -64,6 +61,29 @@ class ToolExecutor:
             ToolExecutionError,
             TypeError,
         ) as error:
+            return self._failed_result(request, error, started_at)
+
+        result = self._run_tool(request, tool, started_at)
+        self._trigger_post_tool_use(pre_tool_context, result)
+        return result
+
+    def _run_tool(
+        self,
+        request: ToolCallRequest,
+        tool: object,
+        started_at: float,
+    ) -> ToolCallResult:
+        """运行已通过执行前检查的工具，并将运行期失败收束为结果。"""
+
+        try:
+            data = tool.run(request.arguments)  # type: ignore[attr-defined]
+            return ToolCallResult.succeeded(
+                name=request.name,
+                data=data,
+                duration_ms=self._elapsed_ms(started_at),
+                call_id=request.call_id,
+            )
+        except (ToolValidationError, ToolExecutionError, TypeError) as error:
             return self._failed_result(request, error, started_at)
         except Exception as error:
             return self._failed_result(
@@ -88,6 +108,35 @@ class ToolExecutor:
         result = self._hook_runner.trigger(HookEvent.PRE_TOOL_USE, pre_tool_context)
         if result.decision is HookDecision.BLOCK:
             raise ToolHookBlockedError(result.message or "执行前 Hook 未提供阻止原因。")
+
+    def _trigger_post_tool_use(
+        self,
+        pre_tool_context: PreToolUseContext | None,
+        result: ToolCallResult,
+    ) -> None:
+        """在工具结果确定后触发观察型 Hook，不允许其改写既有结果。"""
+
+        if self._hook_runner is None or pre_tool_context is None:
+            return
+        post_tool_context = PostToolUseContext(
+            session_id=pre_tool_context.session_id,
+            run_id=pre_tool_context.run_id,
+            step_id=pre_tool_context.step_id,
+            request=pre_tool_context.request,
+            result=result,
+        )
+        try:
+            self._hook_runner.trigger(HookEvent.POST_TOOL_USE, post_tool_context)
+        except HookExecutionError:
+            logger.warning(
+                "工具执行后 Hook 失败，不影响工具结果。",
+                exc_info=True,
+                extra={
+                    "session_id": post_tool_context.session_id,
+                    "run_id": post_tool_context.run_id,
+                    "step_id": post_tool_context.step_id,
+                },
+            )
 
     def _failed_result(self, request: ToolCallRequest, error: Exception, started_at: float) -> ToolCallResult:
         return ToolCallResult.failed(

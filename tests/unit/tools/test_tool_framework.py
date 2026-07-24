@@ -7,6 +7,7 @@ from local_dev_agent.hooks import (
     HookRegistry,
     HookResult,
     HookRunner,
+    PostToolUseContext,
     PreToolUseContext,
 )
 from local_dev_agent.tools import (
@@ -316,3 +317,112 @@ def test_executor_rejects_missing_or_mismatched_context_when_hooks_are_enabled()
     assert mismatched_context.error["type"] == "ToolExecutionError"  # type: ignore[index]
     assert "必须关联当前工具调用请求" in mismatched_context.error["message"]  # type: ignore[index]
     assert tool.calls == []
+
+
+class RecordingPostToolHook:
+    """记录工具结果但不改变执行结果的测试 Hook。"""
+
+    name = "record-result"
+
+    def __init__(self, result: HookResult | None = None) -> None:
+        self.contexts: list[PostToolUseContext] = []
+        self._result = result or HookResult.continue_()
+
+    def handle(self, context: PostToolUseContext) -> HookResult:
+        self.contexts.append(context)
+        return self._result
+
+
+class FailingPostToolHook:
+    """抛出异常，用于验证观察型 Hook 不改变工具结果。"""
+
+    name = "failing-post"
+
+    def handle(self, context: PostToolUseContext) -> HookResult:
+        raise RuntimeError("审计服务不可用")
+
+
+def _pre_tool_context(request: ToolCallRequest) -> PreToolUseContext:
+    return PreToolUseContext(
+        session_id="session-1",
+        run_id="run-1",
+        step_id="step-1",
+        request=request,
+    )
+
+
+def test_executor_triggers_post_tool_hook_with_the_final_success_result() -> None:
+    tool = FakeTool(definition=_read_definition(), result={"content": "测试内容"})
+    tool_registry = ToolRegistry()
+    tool_registry.register(tool)
+    post_hook = RecordingPostToolHook(HookResult.block("停止后续审计。"))
+    hook_registry = HookRegistry()
+    hook_registry.register(HookEvent.POST_TOOL_USE, post_hook)
+    executor = ToolExecutor(tool_registry, hook_runner=HookRunner(hook_registry))
+    request = ToolCallRequest(name="read_file", arguments={"path": "README.md"})
+
+    result = executor.execute(request, pre_tool_context=_pre_tool_context(request))
+
+    assert result.success is True
+    assert result.data == {"content": "测试内容"}
+    assert tool.calls == [{"path": "README.md"}]
+    assert post_hook.contexts[0].request is request
+    assert post_hook.contexts[0].result == result
+
+
+def test_executor_triggers_post_hook_for_tool_failures_but_not_pre_hook_blocks() -> None:
+    tool_registry = ToolRegistry()
+    tool_registry.register(
+        FunctionTool(
+            definition=ToolDefinition(
+                name="explode",
+                description="抛出异常的测试工具。",
+                parameters={"type": "object", "properties": {}},
+            ),
+            function=lambda arguments: (_ for _ in ()).throw(RuntimeError("测试失败")),
+        )
+    )
+    post_hook = RecordingPostToolHook()
+    pre_hook = BlockingPreToolHook()
+    hook_registry = HookRegistry()
+    hook_registry.register(HookEvent.POST_TOOL_USE, post_hook)
+    executor = ToolExecutor(tool_registry, hook_runner=HookRunner(hook_registry))
+    failed_request = ToolCallRequest(name="explode", arguments={})
+
+    failed_result = executor.execute(
+        failed_request,
+        pre_tool_context=_pre_tool_context(failed_request),
+    )
+
+    blocking_registry = HookRegistry()
+    blocking_registry.register(HookEvent.PRE_TOOL_USE, pre_hook)
+    blocking_registry.register(HookEvent.POST_TOOL_USE, post_hook)
+    blocked_executor = ToolExecutor(
+        tool_registry,
+        hook_runner=HookRunner(blocking_registry),
+    )
+    blocked_request = ToolCallRequest(name="explode", arguments={})
+    blocked_result = blocked_executor.execute(
+        blocked_request,
+        pre_tool_context=_pre_tool_context(blocked_request),
+    )
+
+    assert failed_result.success is False
+    assert post_hook.contexts[0].result == failed_result
+    assert blocked_result.error["type"] == "ToolHookBlockedError"  # type: ignore[index]
+    assert len(post_hook.contexts) == 1
+
+
+def test_executor_keeps_the_tool_result_when_a_post_hook_fails() -> None:
+    tool = FakeTool(definition=_read_definition(), result={"content": "测试内容"})
+    tool_registry = ToolRegistry()
+    tool_registry.register(tool)
+    hook_registry = HookRegistry()
+    hook_registry.register(HookEvent.POST_TOOL_USE, FailingPostToolHook())
+    executor = ToolExecutor(tool_registry, hook_runner=HookRunner(hook_registry))
+    request = ToolCallRequest(name="read_file", arguments={"path": "README.md"})
+
+    result = executor.execute(request, pre_tool_context=_pre_tool_context(request))
+
+    assert result.success is True
+    assert result.data == {"content": "测试内容"}

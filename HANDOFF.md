@@ -6,6 +6,7 @@
 - 已完成 S4 的第 1 个教学式小步：定义了独立 Hook 包的事件、不可变上下文和结构化控制结果契约；尚未注册或触发 Hook，因此现有 Runtime 与工具执行行为保持不变。
 - 已完成 S4 的第 2 个教学式小步：实现 Hook 注册与触发基础设施；注册顺序稳定，首个阻止结果会终止该事件的后续回调，但尚未接入 Runtime 或工具执行。
 - 已完成 S4 的第 3 个教学式小步：`PreToolUse` 已接入工具执行边界；工具仅在查找和参数校验通过后触发 Hook，被阻止时不运行工具实现并将结构化失败结果回填模型。
+- 已完成 S4 的第 4 个教学式小步：`PostToolUse` 已接入工具执行边界；工具实际运行并生成结果后触发观察型 Hook，Hook 不能改写既有结果，失败仅记录日志。
 - 使用 Conda 环境 `local-dev-agent`（Python 3.13）。
 
 ## 已完成
@@ -98,15 +99,18 @@
 - 新增 `ToolHookBlockedError`：执行前 Hook 返回 `block` 时，工具实现不会运行，失败结果保留原始 `call_id` 并正常回填模型；`MinimalAgentLoop` 会构造携带 Session、Run、Tool Step 关联标识的执行前上下文。
 - Hook 契约对模型与工具协议改为仅类型检查时导入、运行时在校验点延迟导入，消除 `Hook → 工具协议 → ToolExecutor → Hook` 的导入环，同时不改变契约类型校验。
 - 添加执行前 Hook 集成测试，覆盖校验先于 Hook、阻止后零工具调用、缺失或错配上下文拒绝执行，以及 Agent Loop 向模型回填 Hook 阻止结果与完整关联标识。
+- `ToolExecutor` 在工具实际运行后从既有 `PreToolUseContext` 派生 `PostToolUseContext`，保持 Session、Run、Step 与请求关联一致；未知工具、参数校验失败和执行前阻止不会触发执行后 Hook。
+- `PostToolUse` Hook 仅用于观察和审计：其 `block` 结果不会改写 `ToolCallResult`，回调异常会记录带关联标识的 WARNING 日志，且不会把已产生的工具结果伪装成失败。
+- 添加执行后 Hook 集成测试，覆盖成功结果、工具运行失败结果、执行前阻止不触发执行后 Hook，以及执行后 Hook 异常不影响既有工具结果。
 
 ## 验证
 
 - `anthropic`、`python-dotenv`、`pytest` 可在 Conda 环境中导入。
 - `ruff` 可运行。
 - 已人工核对 `TDD.md` 与 `AGENT_REQUIREMENTS_CHECKLIST.txt` 的 S01–S30 覆盖关系；本次仅修改文档，未运行代码测试。
-- `python -m pytest`：124 passed（覆盖状态机、JSON 文件状态仓储、会话 Transcript、最小内部事件协议、Runtime 输入编排、内容块模型协议、有界 Agent Loop、统一 logging、受控工具框架、DeepSeek Provider、多轮工具调用闭环、最小交互式启动入口、只读文件工具与 Hook 契约、注册、触发和执行前阻止）。
+- `python -m pytest`：127 passed（覆盖状态机、JSON 文件状态仓储、会话 Transcript、最小内部事件协议、Runtime 输入编排、内容块模型协议、有界 Agent Loop、统一 logging、受控工具框架、DeepSeek Provider、多轮工具调用闭环、最小交互式启动入口、只读文件工具与 Hook 契约、注册、执行前阻止和执行后观察）。
 - `python -m ruff check src tests`：通过。
 
 ## 下一步
 
-- 进入 S4 的第 4 个教学式小步：将 `PostToolUse` 接入 `ToolExecutor`。工具执行已收束为 `ToolCallResult` 后触发 Hook，向 Hook 提供冻结的请求和结果；初版仅允许观察与审计，不允许改写已产生的工具结果。随后再接入用户输入和停止事件，并在 S3 中将权限策略接入 `PreToolUse`。
+- 进入 S4 的第 5 个教学式小步：将 `UserPromptSubmit` 接入 `MinimalAgentLoop`。在用户消息持久化后、首次模型调用前触发 Hook；初版只提供观察和审计，不允许改写已保存的用户输入。随后再接入停止事件，并在 S3 中将权限策略接入 `PreToolUse`。
