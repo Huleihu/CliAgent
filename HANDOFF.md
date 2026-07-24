@@ -7,6 +7,7 @@
 - 已完成 S4 的第 2 个教学式小步：实现 Hook 注册与触发基础设施；注册顺序稳定，首个阻止结果会终止该事件的后续回调，但尚未接入 Runtime 或工具执行。
 - 已完成 S4 的第 3 个教学式小步：`PreToolUse` 已接入工具执行边界；工具仅在查找和参数校验通过后触发 Hook，被阻止时不运行工具实现并将结构化失败结果回填模型。
 - 已完成 S4 的第 4 个教学式小步：`PostToolUse` 已接入工具执行边界；工具实际运行并生成结果后触发观察型 Hook，Hook 不能改写既有结果，失败仅记录日志。
+- 已完成 S4 的第 5 个教学式小步：`UserPromptSubmit` 已接入 Agent Loop；用户消息保存后、首次模型调用前触发观察型 Hook，Hook 不改变既有提示词或模型调用。
 - 使用 Conda 环境 `local-dev-agent`（Python 3.13）。
 
 ## 已完成
@@ -102,15 +103,17 @@
 - `ToolExecutor` 在工具实际运行后从既有 `PreToolUseContext` 派生 `PostToolUseContext`，保持 Session、Run、Step 与请求关联一致；未知工具、参数校验失败和执行前阻止不会触发执行后 Hook。
 - `PostToolUse` Hook 仅用于观察和审计：其 `block` 结果不会改写 `ToolCallResult`，回调异常会记录带关联标识的 WARNING 日志，且不会把已产生的工具结果伪装成失败。
 - 添加执行后 Hook 集成测试，覆盖成功结果、工具运行失败结果、执行前阻止不触发执行后 Hook，以及执行后 Hook 异常不影响既有工具结果。
+- `MinimalAgentLoop` 现保留可选 `HookRunner`，在用户消息追加到内存对话并持久化到 Transcript 后触发 `UserPromptSubmit`；Hook 回调失败只记录关联 WARNING 日志，不影响模型调用。
+- `UserPromptSubmit` 保持观察语义：Hook 的 `block` 仅停止同事件后续 Hook，不撤销已保存输入，也不改写发送给模型的内容；添加关联标识与提示词不变性测试。
 
 ## 验证
 
 - `anthropic`、`python-dotenv`、`pytest` 可在 Conda 环境中导入。
 - `ruff` 可运行。
 - 已人工核对 `TDD.md` 与 `AGENT_REQUIREMENTS_CHECKLIST.txt` 的 S01–S30 覆盖关系；本次仅修改文档，未运行代码测试。
-- `python -m pytest`：127 passed（覆盖状态机、JSON 文件状态仓储、会话 Transcript、最小内部事件协议、Runtime 输入编排、内容块模型协议、有界 Agent Loop、统一 logging、受控工具框架、DeepSeek Provider、多轮工具调用闭环、最小交互式启动入口、只读文件工具与 Hook 契约、注册、执行前阻止和执行后观察）。
+- `python -m pytest`：128 passed（覆盖状态机、JSON 文件状态仓储、会话 Transcript、最小内部事件协议、Runtime 输入编排、内容块模型协议、有界 Agent Loop、统一 logging、受控工具框架、DeepSeek Provider、多轮工具调用闭环、最小交互式启动入口、只读文件工具与 Hook 契约、注册、执行前阻止、执行后观察和用户输入观察）。
 - `python -m ruff check src tests`：通过。
 
 ## 下一步
 
-- 进入 S4 的第 5 个教学式小步：将 `UserPromptSubmit` 接入 `MinimalAgentLoop`。在用户消息持久化后、首次模型调用前触发 Hook；初版只提供观察和审计，不允许改写已保存的用户输入。随后再接入停止事件，并在 S3 中将权限策略接入 `PreToolUse`。
+- 进入 S4 的第 6 个教学式小步：将 `Stop` 接入 `MinimalAgentLoop`。在最终模型响应已确定、Run 完成状态持久化前触发观察型 Hook；初版只提供收尾统计与审计，不允许 Hook 强制续跑。完成后再评估 S4 的完整度，并在 S3 中将权限策略接入 `PreToolUse`。

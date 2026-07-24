@@ -15,6 +15,7 @@ from local_dev_agent.hooks import (
     HookResult,
     HookRunner,
     PreToolUseContext,
+    UserPromptSubmitContext,
 )
 from local_dev_agent.models.fake import FakeModel
 from local_dev_agent.models.ports import (
@@ -64,6 +65,19 @@ class BlockingPreToolHook:
         return HookResult.block("测试权限拒绝。")
 
 
+class RecordingUserPromptHook:
+    """记录已保存输入的测试 Hook。"""
+
+    name = "record-prompt"
+
+    def __init__(self) -> None:
+        self.contexts: list[UserPromptSubmitContext] = []
+
+    def handle(self, context: UserPromptSubmitContext) -> HookResult:
+        self.contexts.append(context)
+        return HookResult.block("停止后续输入审计。")
+
+
 def test_minimal_agent_loop_completes_a_text_response_and_persists_states(
     tmp_path,
 ) -> None:
@@ -105,6 +119,44 @@ def test_minimal_agent_loop_completes_a_text_response_and_persists_states(
         RunStatus.RUNNING,
         RunStatus.COMPLETED,
     ]
+
+
+def test_minimal_agent_loop_triggers_user_prompt_hook_without_changing_the_prompt(
+    tmp_path,
+) -> None:
+    timestamp = datetime(2026, 7, 24, 14, 0, tzinfo=timezone.utc)
+    repository = JsonFileStateRepository(tmp_path)
+    session = SessionState.create(
+        session_id="session-1",
+        tenant_id="tenant-1",
+        user_id="user-1",
+        project_id="project-1",
+        created_at=timestamp,
+    )
+    repository.save_session(session)
+    event = UserInputEvent.create(
+        session_id=session.session_id,
+        content="检查项目状态。",
+        occurred_at=timestamp,
+    )
+    start = UserInputRuntimeService(repository).handle(event)
+    hook = RecordingUserPromptHook()
+    hook_registry = HookRegistry()
+    hook_registry.register(HookEvent.USER_PROMPT_SUBMIT, hook)
+    model = FakeModel(ModelResponse.text_completion("项目状态正常。"))
+
+    result = MinimalAgentLoop(
+        repository,
+        model,
+        hook_runner=HookRunner(hook_registry),
+    ).execute(start, occurred_at=timestamp)
+
+    assert hook.contexts[0].session_id == session.session_id
+    assert hook.contexts[0].run_id == start.run.run_id
+    assert hook.contexts[0].step_id == start.first_step.step_id
+    assert hook.contexts[0].prompt == event.content
+    assert model.requests[0].conversation[0].content[0].text == event.content
+    assert result.response.text == "项目状态正常。"
 
 
 def test_minimal_agent_loop_executes_tool_and_returns_its_result_to_the_model(
