@@ -67,6 +67,83 @@ def test_executor_converts_expected_failures_to_structured_results() -> None:
     assert unknown_tool.error["type"] == "ToolNotFoundError"  # type: ignore[index]
 
 
+def test_executor_validates_nested_json_schema_before_running_a_tool() -> None:
+    tool = FakeTool(
+        definition=ToolDefinition(
+            name="search_files",
+            description="搜索文件。",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string"},
+                    "limit": {"type": "integer"},
+                    "include_hidden": {"type": "boolean"},
+                    "extensions": {"type": "array", "items": {"type": "string"}},
+                    "options": {
+                        "type": "object",
+                        "properties": {"recursive": {"type": "boolean"}},
+                        "required": ["recursive"],
+                    },
+                },
+                "required": ["query"],
+            },
+        ),
+        result={"matches": []},
+    )
+    registry = ToolRegistry()
+    registry.register(tool)
+    executor = ToolExecutor(registry)
+
+    valid_result = executor.execute(
+        ToolCallRequest(
+            name="search_files",
+            arguments={
+                "query": "Agent",
+                "limit": 20,
+                "include_hidden": False,
+                "extensions": [".py", ".md"],
+                "options": {"recursive": True},
+            },
+        )
+    )
+    invalid_results = (
+        executor.execute(
+            ToolCallRequest(name="search_files", arguments={"query": 123})
+        ),
+        executor.execute(
+            ToolCallRequest(name="search_files", arguments={"query": "Agent", "extra": True})
+        ),
+        executor.execute(
+            ToolCallRequest(
+                name="search_files",
+                arguments={"query": "Agent", "extensions": [".py", 1]},
+            )
+        ),
+        executor.execute(
+            ToolCallRequest(
+                name="search_files",
+                arguments={"query": "Agent", "options": {}},
+            )
+        ),
+    )
+
+    assert valid_result.success is True
+    assert all(result.success is False for result in invalid_results)
+    assert all(
+        result.error is not None and result.error["type"] == "ToolValidationError"
+        for result in invalid_results
+    )
+    assert tool.calls == [
+        {
+            "query": "Agent",
+            "limit": 20,
+            "include_hidden": False,
+            "extensions": [".py", ".md"],
+            "options": {"recursive": True},
+        }
+    ]
+
+
 def test_executor_converts_tool_exception_and_invalid_result_to_failures() -> None:
     registry = ToolRegistry()
     registry.register(

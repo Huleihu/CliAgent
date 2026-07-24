@@ -2,6 +2,7 @@
 
 from time import perf_counter
 
+from .argument_validator import validate_arguments
 from .errors import ToolExecutionError, ToolNotFoundError, ToolValidationError
 from .registry import ToolRegistry
 from .schema import ToolCallRequest, ToolCallResult
@@ -19,7 +20,11 @@ class ToolExecutor:
         started_at = perf_counter()
         try:
             tool = self._registry.get(request.name)
-            self._validate_required_arguments(tool.definition.parameters, request)
+            validate_arguments(
+                tool_name=request.name,
+                parameters=tool.definition.parameters,
+                arguments=request.arguments,
+            )
             data = tool.run(request.arguments)
             return ToolCallResult.succeeded(
                 name=request.name,
@@ -34,16 +39,6 @@ class ToolExecutor:
                 request,
                 ToolExecutionError(f"工具执行失败：{error}"),
                 started_at,
-            )
-
-    def _validate_required_arguments(self, parameters, request: ToolCallRequest) -> None:
-        required_fields = parameters.get("required", [])
-        missing_fields = sorted(
-            field_name for field_name in required_fields if field_name not in request.arguments
-        )
-        if missing_fields:
-            raise ToolValidationError(
-                f"工具“{request.name}”缺少必填参数：{', '.join(missing_fields)}。"
             )
 
     def _failed_result(self, request: ToolCallRequest, error: Exception, started_at: float) -> ToolCallResult:

@@ -2,7 +2,7 @@
 
 ## 当前状态
 
-- 已完成 Phase 1 的第十九个教学式迭代：状态机、JSON 文件状态仓储、最小内部事件协议、Runtime 输入编排、内容块模型协议、有界 Agent Loop、统一 logging、受控工具框架、DeepSeek 真实模型适配、多轮工具调用闭环、最小交互式启动入口、真实只读文件工具与跨 Run 会话历史。
+- 已完成 Phase 1 的第二十个教学式迭代：状态机、JSON 文件状态仓储、最小内部事件协议、Runtime 输入编排、内容块模型协议、有界 Agent Loop、统一 logging、受控工具框架、DeepSeek 真实模型适配、多轮工具调用闭环、最小交互式启动入口、真实只读文件工具、跨 Run 会话历史与统一参数校验。
 - 使用 Conda 环境 `local-dev-agent`（Python 3.13）。
 
 ## 已完成
@@ -84,15 +84,17 @@
 - 新增独立 `ConversationRepository` 与 `JsonFileConversationRepository`：以按 Session 分文件的版本化 JSON Transcript 持久化用户消息、助手响应、工具调用和工具结果；不将消息塞入既有 Session/Run/Step 状态快照。
 - `MinimalAgentLoop` 在每个消息边界追加 Transcript，并在新的 Run 开始时加载同一 Session 的完整历史；最小 CLI 已完成装配。
 - 添加消息 Transcript 的跨实例恢复、损坏文件、缺失历史，以及跨 Run 复用已发现文件并直接调用 `read_file` 的闭环测试。
+- 新增 `argument_validator`：`ToolExecutor` 现在在 Handler 前统一校验现有工具 Schema 所需的对象、字符串、整数、布尔值、数组、嵌套对象、必填字段与未知字段；无效调用会回填结构化错误且不会进入工具实现。
+- 添加嵌套 JSON Schema 校验测试，覆盖正确调用、错误类型、未知字段、数组元素错误和嵌套必填字段遗漏。
 
 ## 验证
 
 - `anthropic`、`python-dotenv`、`pytest` 可在 Conda 环境中导入。
 - `ruff` 可运行。
 - 已人工核对 `TDD.md` 与 `AGENT_REQUIREMENTS_CHECKLIST.txt` 的 S01–S30 覆盖关系；本次仅修改文档，未运行代码测试。
-- `python -m pytest`：100 passed（覆盖状态机、JSON 文件状态仓储、会话 Transcript、最小内部事件协议、Runtime 输入编排、内容块模型协议、有界 Agent Loop、统一 logging、受控工具框架、DeepSeek Provider、多轮工具调用闭环、最小交互式启动入口与只读文件工具）。
+- `python -m pytest`：101 passed（覆盖状态机、JSON 文件状态仓储、会话 Transcript、最小内部事件协议、Runtime 输入编排、内容块模型协议、有界 Agent Loop、统一 logging、受控工具框架、DeepSeek Provider、多轮工具调用闭环、最小交互式启动入口与只读文件工具）。
 - `python -m ruff check src tests`：通过。
 
 ## 下一步
 
-- 继续改进版 `learnClaude/s02_tool_use` 的第 3 小步：为现有 `ToolExecutor` 补齐 JSON Schema 参数类型与未知字段校验，再评估只读 `glob` 是否仍有必要；Transcript 的预算、压缩与敏感信息处理留给后续 Context 管理小步。暂不开放 PowerShell、文件写入或编辑能力，等待 Permission 管线落地。
+- 进入 `learnClaude/s03_permission` 的第 1 小步：定义可替换的 Permission 决策端口与 allow/deny 结果，在任何工具 Handler 前执行；首先为只读工具建立明确的默认允许策略，再为后续写入和 PowerShell 的审批流程预留持久化边界。Transcript 的预算、压缩与敏感信息处理留给后续 Context 管理小步。
