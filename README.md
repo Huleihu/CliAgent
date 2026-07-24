@@ -62,6 +62,10 @@ python -m local_dev_agent
 只返回相对文件路径，后者只读取有限行数和有限字符数的 UTF-8 文本。两者均不会写入
 文件或执行命令。
 
+同一进程内的后续输入会复用该 Session 已持久化的用户消息、工具调用、工具结果与助手
+文本，因此“读取它的前 20 行”能够引用上一轮已发现的文件。消息历史保存在
+`sandbox/var/state/conversations/`。
+
 ## 常用命令
 
 ```powershell

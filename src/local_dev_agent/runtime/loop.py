@@ -21,10 +21,12 @@ from local_dev_agent.models import (
     ModelRequest,
     ModelResponse,
     StopReason,
+    TextBlock,
     ToolResultBlock,
     ToolUseBlock,
 )
 from local_dev_agent.storage.ports import StateRepository
+from local_dev_agent.storage.conversation_ports import ConversationRepository
 from local_dev_agent.tools import ToolCallRequest, ToolExecutor, ToolRegistry
 from local_dev_agent.tools.schema import ToolCallResult
 
@@ -53,6 +55,7 @@ class MinimalAgentLoop:
         repository: StateRepository,
         model: ModelClient,
         registry: ToolRegistry | None = None,
+        conversation_repository: ConversationRepository | None = None,
         *,
         max_turns: int = 10,
     ) -> None:
@@ -61,6 +64,7 @@ class MinimalAgentLoop:
         self._repository = repository
         self._model = model
         self._registry = registry or ToolRegistry()
+        self._conversation_repository = conversation_repository
         self._executor = ToolExecutor(self._registry)
         self._max_turns = max_turns
 
@@ -83,13 +87,13 @@ class MinimalAgentLoop:
         running_run = self._start_run(start.run, timestamp)
         current_step = self._start_step(start.first_step, timestamp)
         completed_steps: list[StepState] = []
-        conversation = list(
-            ModelRequest(
-                session_id=start.session.session_id,
-                run_id=running_run.run_id,
-                user_input=start.event.content,
-            ).conversation
+        user_message = ModelMessage(
+            role=MessageRole.USER,
+            content=(TextBlock(text=start.event.content),),
         )
+        conversation = self._load_conversation(start.session.session_id)
+        conversation.append(user_message)
+        self._append_messages(start.session.session_id, (user_message,))
 
         for turn_number in range(1, self._max_turns + 1):
             response = self._generate(
@@ -98,9 +102,12 @@ class MinimalAgentLoop:
                 conversation=tuple(conversation),
                 log_context=log_context,
             )
-            conversation.append(
-                ModelMessage(role=MessageRole.ASSISTANT, content=response.content)
+            assistant_message = ModelMessage(
+                role=MessageRole.ASSISTANT,
+                content=response.content,
             )
+            conversation.append(assistant_message)
+            self._append_messages(start.session.session_id, (assistant_message,))
             tool_blocks = tuple(
                 block for block in response.content if isinstance(block, ToolUseBlock)
             )
@@ -115,8 +122,14 @@ class MinimalAgentLoop:
                     log_context=log_context,
                 )
                 completed_steps.extend(tool_steps)
-                conversation.append(
-                    ModelMessage(role=MessageRole.USER, content=tool_results)
+                tool_result_message = ModelMessage(
+                    role=MessageRole.USER,
+                    content=tool_results,
+                )
+                conversation.append(tool_result_message)
+                self._append_messages(
+                    start.session.session_id,
+                    (tool_result_message,),
                 )
 
                 if turn_number == self._max_turns:
@@ -167,6 +180,19 @@ class MinimalAgentLoop:
             )
 
         raise AssertionError("最大轮次控制未覆盖所有循环分支。")
+
+    def _load_conversation(self, session_id: str) -> list[ModelMessage]:
+        if self._conversation_repository is None:
+            return []
+        return list(self._conversation_repository.get_messages(session_id))
+
+    def _append_messages(
+        self,
+        session_id: str,
+        messages: tuple[ModelMessage, ...],
+    ) -> None:
+        if self._conversation_repository is not None:
+            self._conversation_repository.append_messages(session_id, messages)
 
     def _start_run(self, run: RunState, timestamp: datetime) -> RunState:
         recovering_run = run.transition_to(RunStatus.RECOVERING, occurred_at=timestamp)

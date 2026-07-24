@@ -13,6 +13,7 @@ from local_dev_agent.observability import configure_logging
 from local_dev_agent.runtime import MinimalAgentLoop, UserInputRuntimeService
 from local_dev_agent.runtime.loop import AgentLoopResult
 from local_dev_agent.storage.json_state_repository import JsonFileStateRepository
+from local_dev_agent.storage.json_conversation_repository import JsonFileConversationRepository
 from local_dev_agent.storage.ports import StateRepository
 from local_dev_agent.tools import ToolRegistry
 from local_dev_agent.tools.builtin import ListFilesTool, ReadFileTool
@@ -55,6 +56,7 @@ def main() -> None:
     workspace = default_workspace()
     configure_logging(log_directory=workspace / "var" / "logs")
     repository = JsonFileStateRepository(workspace / "var" / "state")
+    conversation_repository = JsonFileConversationRepository(workspace / "var" / "state")
     session = SessionState.create(
         tenant_id="local",
         user_id="local",
@@ -64,7 +66,12 @@ def main() -> None:
     model: ModelClient = DeepSeekAnthropicModelClient(
         DeepSeekSettings.from_environment()
     )
-    loop = MinimalAgentLoop(repository, model, create_tool_registry(workspace))
+    loop = MinimalAgentLoop(
+        repository,
+        model,
+        create_tool_registry(workspace),
+        conversation_repository,
+    )
 
     print("Local Dev Agent")
     print("输入问题并回车发送。输入 q、exit 或空行退出。\n")

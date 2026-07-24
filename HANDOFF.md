@@ -2,7 +2,7 @@
 
 ## 当前状态
 
-- 已完成 Phase 1 的第十八个教学式迭代：状态机、JSON 文件状态仓储、最小内部事件协议、Runtime 输入编排、内容块模型协议、有界 Agent Loop、统一 logging、受控工具框架、DeepSeek 真实模型适配、多轮工具调用闭环、最小交互式启动入口与首批真实只读文件工具。
+- 已完成 Phase 1 的第十九个教学式迭代：状态机、JSON 文件状态仓储、最小内部事件协议、Runtime 输入编排、内容块模型协议、有界 Agent Loop、统一 logging、受控工具框架、DeepSeek 真实模型适配、多轮工具调用闭环、最小交互式启动入口、真实只读文件工具与跨 Run 会话历史。
 - 使用 Conda 环境 `local-dev-agent`（Python 3.13）。
 
 ## 已完成
@@ -81,15 +81,18 @@
 - 最小 CLI 默认注册 `read_file`；添加读取行范围、字符截断、越界、目录、非 UTF-8 文件、非法行参数与真实工具回填闭环测试。
 - 最小 CLI 的默认工作区从终端当前目录改为项目根目录下的 `sandbox/`；因此从任意目录启动时，文件工具边界和本地状态/日志位置保持一致。
 - 将本地 `sandbox/` 工作区加入 Git 忽略规则，避免其运行状态、日志和临时测试文件进入版本控制。
+- 新增独立 `ConversationRepository` 与 `JsonFileConversationRepository`：以按 Session 分文件的版本化 JSON Transcript 持久化用户消息、助手响应、工具调用和工具结果；不将消息塞入既有 Session/Run/Step 状态快照。
+- `MinimalAgentLoop` 在每个消息边界追加 Transcript，并在新的 Run 开始时加载同一 Session 的完整历史；最小 CLI 已完成装配。
+- 添加消息 Transcript 的跨实例恢复、损坏文件、缺失历史，以及跨 Run 复用已发现文件并直接调用 `read_file` 的闭环测试。
 
 ## 验证
 
 - `anthropic`、`python-dotenv`、`pytest` 可在 Conda 环境中导入。
 - `ruff` 可运行。
 - 已人工核对 `TDD.md` 与 `AGENT_REQUIREMENTS_CHECKLIST.txt` 的 S01–S30 覆盖关系；本次仅修改文档，未运行代码测试。
-- `python -m pytest`：96 passed（覆盖状态机、JSON 文件状态仓储、最小内部事件协议、Runtime 输入编排、内容块模型协议、有界 Agent Loop、统一 logging、受控工具框架、DeepSeek Provider、多轮工具调用闭环、最小交互式启动入口与只读文件工具）。
+- `python -m pytest`：100 passed（覆盖状态机、JSON 文件状态仓储、会话 Transcript、最小内部事件协议、Runtime 输入编排、内容块模型协议、有界 Agent Loop、统一 logging、受控工具框架、DeepSeek Provider、多轮工具调用闭环、最小交互式启动入口与只读文件工具）。
 - `python -m ruff check src tests`：通过。
 
 ## 下一步
 
-- 继续改进版 `learnClaude/s02_tool_use` 的第 3 小步：为现有 `ToolExecutor` 补齐 JSON Schema 参数类型与未知字段校验，再评估只读 `glob` 是否仍有必要；暂不开放 PowerShell、文件写入或编辑能力，等待 Permission 管线落地。
+- 继续改进版 `learnClaude/s02_tool_use` 的第 3 小步：为现有 `ToolExecutor` 补齐 JSON Schema 参数类型与未知字段校验，再评估只读 `glob` 是否仍有必要；Transcript 的预算、压缩与敏感信息处理留给后续 Context 管理小步。暂不开放 PowerShell、文件写入或编辑能力，等待 Permission 管线落地。

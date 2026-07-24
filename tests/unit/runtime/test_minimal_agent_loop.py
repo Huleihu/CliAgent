@@ -11,9 +11,11 @@ from local_dev_agent.domain.state import (
 )
 from local_dev_agent.models.fake import FakeModel
 from local_dev_agent.models.ports import (
+    MessageRole,
     ModelRequest,
     ModelResponse,
     StopReason,
+    TextBlock,
     ToolResultBlock,
     ToolUseBlock,
 )
@@ -21,6 +23,7 @@ from local_dev_agent.runtime.errors import AgentLoopExhaustedError
 from local_dev_agent.runtime.input_service import UserInputRuntimeService
 from local_dev_agent.runtime.loop import MinimalAgentLoop
 from local_dev_agent.storage.json_state_repository import JsonFileStateRepository
+from local_dev_agent.storage.json_conversation_repository import JsonFileConversationRepository
 from local_dev_agent.tools import FakeTool, ToolDefinition, ToolRegistry
 from local_dev_agent.tools.builtin import ListFilesTool, ReadFileTool
 
@@ -259,6 +262,110 @@ def test_minimal_agent_loop_returns_text_from_the_real_read_only_tool(tmp_path) 
         "total_lines": 1,
         "truncated": False,
     }
+    assert result.response.text == "README 的内容是项目说明。"
+
+
+def test_minimal_agent_loop_reuses_persisted_session_history_across_runs(tmp_path) -> None:
+    timestamp = datetime(2026, 7, 24, 11, 0, tzinfo=timezone.utc)
+    repository = JsonFileStateRepository(tmp_path / "state")
+    conversation_repository = JsonFileConversationRepository(tmp_path / "state")
+    session = SessionState.create(
+        session_id="session-1",
+        tenant_id="tenant-1",
+        user_id="user-1",
+        project_id="project-1",
+        created_at=timestamp,
+    )
+    repository.save_session(session)
+    registry = ToolRegistry()
+    registry.register(
+        FakeTool(
+            definition=ToolDefinition(
+                name="list_files",
+                description="列出文件。",
+                parameters={"type": "object", "properties": {}},
+            ),
+            result={"files": ["README.md"], "truncated": False},
+        )
+    )
+    registry.register(
+        FakeTool(
+            definition=ToolDefinition(
+                name="read_file",
+                description="读取文件。",
+                parameters={
+                    "type": "object",
+                    "properties": {"path": {"type": "string"}},
+                    "required": ["path"],
+                },
+            ),
+            result={"content": "项目说明"},
+        )
+    )
+    model = ScriptedModel(
+        (
+            ModelResponse(
+                stop_reason=StopReason.TOOL_USE,
+                content=(
+                    ToolUseBlock(
+                        tool_use_id="toolu-list",
+                        name="list_files",
+                        input={},
+                    ),
+                ),
+            ),
+            ModelResponse.text_completion("目录中有 README.md。"),
+            ModelResponse(
+                stop_reason=StopReason.TOOL_USE,
+                content=(
+                    ToolUseBlock(
+                        tool_use_id="toolu-read",
+                        name="read_file",
+                        input={"path": "README.md"},
+                    ),
+                ),
+            ),
+            ModelResponse.text_completion("README 的内容是项目说明。"),
+        )
+    )
+    loop = MinimalAgentLoop(
+        repository,
+        model,
+        registry,
+        conversation_repository,
+    )
+
+    first_start = UserInputRuntimeService(repository).handle(
+        UserInputEvent.create(
+            session_id=session.session_id,
+            content="我目录有哪些文件？",
+            occurred_at=timestamp,
+        )
+    )
+    first_result = loop.execute(first_start, occurred_at=timestamp)
+    second_start = UserInputRuntimeService(repository).handle(
+        UserInputEvent.create(
+            session_id=first_result.session.session_id,
+            content="告诉我里面前 20 行是什么。",
+            occurred_at=timestamp,
+        )
+    )
+
+    result = loop.execute(second_start, occurred_at=timestamp)
+
+    second_run_request = model.requests[2]
+    assert [message.role for message in second_run_request.conversation] == [
+        MessageRole.USER,
+        MessageRole.ASSISTANT,
+        MessageRole.USER,
+        MessageRole.ASSISTANT,
+        MessageRole.USER,
+    ]
+    assert second_run_request.conversation[2].content[0].content == {
+        "files": ["README.md"],
+        "truncated": False,
+    }
+    assert isinstance(second_run_request.conversation[3].content[0], TextBlock)
     assert result.response.text == "README 的内容是项目说明。"
 
 

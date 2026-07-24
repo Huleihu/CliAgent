@@ -11,6 +11,14 @@ class CorruptedStateFileError(ValueError):
         self.path = path
 
 
+class CorruptedConversationFileError(ValueError):
+    """当会话消息文件无法解析或不符合支持的结构时抛出。"""
+
+    def __init__(self, *, path: Path) -> None:
+        super().__init__(f"会话消息文件“{path}”已损坏或格式不受支持。")
+        self.path = path
+
+
 class StateVersionConflictError(ValueError):
     """当旧状态快照尝试覆盖已保存的新版本时抛出。"""
 
