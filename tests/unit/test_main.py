@@ -1,8 +1,10 @@
 from datetime import datetime, timezone
+from pathlib import Path
 
 from local_dev_agent.domain.state import SessionState
-from local_dev_agent.main import execute_prompt
 from local_dev_agent.main import create_tool_registry
+from local_dev_agent.main import default_workspace
+from local_dev_agent.main import execute_prompt
 from local_dev_agent.models.fake import FakeModel
 from local_dev_agent.models.ports import ModelResponse
 from local_dev_agent.runtime.loop import MinimalAgentLoop
@@ -39,4 +41,13 @@ def test_execute_prompt_connects_input_service_to_agent_loop(tmp_path) -> None:
 def test_create_tool_registry_registers_the_read_only_file_listing_tool(tmp_path) -> None:
     registry = create_tool_registry(tmp_path)
 
-    assert [definition.name for definition in registry.list_definitions()] == ["list_files"]
+    assert [definition.name for definition in registry.list_definitions()] == [
+        "list_files",
+        "read_file",
+    ]
+
+
+def test_default_workspace_is_the_project_sandbox_directory() -> None:
+    expected_workspace = Path(__file__).resolve().parents[2] / "sandbox"
+
+    assert default_workspace() == expected_workspace.resolve()

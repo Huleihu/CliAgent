@@ -34,6 +34,17 @@ class WorkspaceBoundary:
             raise ToolExecutionError(f"目录不存在或不是目录：{directory}。")
         return resolved_directory
 
+    def resolve_file(self, path: str) -> Path:
+        """解析工作区内文件，并在读取前拒绝越界或非文件目标。"""
+
+        relative_path = self._validate_relative_path("path", path)
+        resolved_path = (self._root / relative_path).resolve()
+        if not self.contains(resolved_path):
+            raise ToolValidationError(f"文件“{path}”超出工作区边界。")
+        if not resolved_path.is_file():
+            raise ToolExecutionError(f"文件不存在或不是普通文件：{path}。")
+        return resolved_path
+
     def validate_pattern(self, pattern: str) -> str:
         """拒绝可借由 glob 模式跨越工作区的路径片段。"""
 

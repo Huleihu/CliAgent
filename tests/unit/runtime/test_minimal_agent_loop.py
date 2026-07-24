@@ -22,7 +22,7 @@ from local_dev_agent.runtime.input_service import UserInputRuntimeService
 from local_dev_agent.runtime.loop import MinimalAgentLoop
 from local_dev_agent.storage.json_state_repository import JsonFileStateRepository
 from local_dev_agent.tools import FakeTool, ToolDefinition, ToolRegistry
-from local_dev_agent.tools.builtin import ListFilesTool
+from local_dev_agent.tools.builtin import ListFilesTool, ReadFileTool
 
 
 class ScriptedModel:
@@ -205,6 +205,61 @@ def test_minimal_agent_loop_returns_listed_files_from_the_real_read_only_tool(tm
     assert isinstance(tool_result, ToolResultBlock)
     assert tool_result.content == {"files": ["README.md"], "truncated": False}
     assert result.response.text == "找到 README.md。"
+
+
+def test_minimal_agent_loop_returns_text_from_the_real_read_only_tool(tmp_path) -> None:
+    timestamp = datetime(2026, 7, 24, 10, 0, tzinfo=timezone.utc)
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    (workspace / "README.md").write_text("项目说明", encoding="utf-8")
+    repository = JsonFileStateRepository(tmp_path / "state")
+    session = SessionState.create(
+        session_id="session-1",
+        tenant_id="tenant-1",
+        user_id="user-1",
+        project_id=str(workspace),
+        created_at=timestamp,
+    )
+    repository.save_session(session)
+    start = UserInputRuntimeService(repository).handle(
+        UserInputEvent.create(
+            session_id=session.session_id,
+            content="读取 README。",
+            occurred_at=timestamp,
+        )
+    )
+    registry = ToolRegistry()
+    registry.register(ReadFileTool(workspace))
+    model = ScriptedModel(
+        (
+            ModelResponse(
+                stop_reason=StopReason.TOOL_USE,
+                content=(
+                    ToolUseBlock(
+                        tool_use_id="toolu-1",
+                        name="read_file",
+                        input={"path": "README.md"},
+                    ),
+                ),
+            ),
+            ModelResponse.text_completion("README 的内容是项目说明。"),
+        )
+    )
+
+    result = MinimalAgentLoop(repository, model, registry).execute(
+        start,
+        occurred_at=timestamp,
+    )
+
+    tool_result = model.requests[1].conversation[2].content[0]
+    assert isinstance(tool_result, ToolResultBlock)
+    assert tool_result.content == {
+        "path": "README.md",
+        "content": "项目说明",
+        "total_lines": 1,
+        "truncated": False,
+    }
+    assert result.response.text == "README 的内容是项目说明。"
 
 
 def test_minimal_agent_loop_exhausts_after_the_configured_model_turn_limit(

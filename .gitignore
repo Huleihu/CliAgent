@@ -37,3 +37,4 @@ pytest-cache-files-*/
 
 # Local runtime state
 var/
+sandbox/

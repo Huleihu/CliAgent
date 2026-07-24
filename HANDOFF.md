@@ -2,7 +2,7 @@
 
 ## 当前状态
 
-- 已完成 Phase 1 的第十七个教学式迭代：状态机、JSON 文件状态仓储、最小内部事件协议、Runtime 输入编排、内容块模型协议、有界 Agent Loop、统一 logging、受控工具框架、DeepSeek 真实模型适配、多轮工具调用闭环、最小交互式启动入口与首个真实只读工具。
+- 已完成 Phase 1 的第十八个教学式迭代：状态机、JSON 文件状态仓储、最小内部事件协议、Runtime 输入编排、内容块模型协议、有界 Agent Loop、统一 logging、受控工具框架、DeepSeek 真实模型适配、多轮工具调用闭环、最小交互式启动入口与首批真实只读文件工具。
 - 使用 Conda 环境 `local-dev-agent`（Python 3.13）。
 
 ## 已完成
@@ -77,15 +77,19 @@
 - 添加 `list_files` 单元测试与真实工具驱动的 Agent Loop 闭环测试，覆盖模式筛选、稳定排序、结果截断、工作区越界拒绝、CLI 注册和结果回填。
 - 修复 DeepSeek 工具结果回填后的 thinking 兼容性：Provider 现在显式关闭 thinking 模式，避免当前不持久化推理内容的内部协议在后续请求中丢失必要内容，导致模型仅返回思考块或空内容。
 - Provider 对意外的仅思考或空响应会报告内容类型摘要，不记录思考正文；补充请求参数和仅思考响应的单元测试。
+- 新增 `ReadFileTool`：复用 `WorkspaceBoundary` 的文件解析规则，只读取工作区内普通 UTF-8 文本文件；支持从指定行开始读取，并限制最多 1000 行和 20000 个字符，超出时以 `truncated` 标记返回。
+- 最小 CLI 默认注册 `read_file`；添加读取行范围、字符截断、越界、目录、非 UTF-8 文件、非法行参数与真实工具回填闭环测试。
+- 最小 CLI 的默认工作区从终端当前目录改为项目根目录下的 `sandbox/`；因此从任意目录启动时，文件工具边界和本地状态/日志位置保持一致。
+- 将本地 `sandbox/` 工作区加入 Git 忽略规则，避免其运行状态、日志和临时测试文件进入版本控制。
 
 ## 验证
 
 - `anthropic`、`python-dotenv`、`pytest` 可在 Conda 环境中导入。
 - `ruff` 可运行。
 - 已人工核对 `TDD.md` 与 `AGENT_REQUIREMENTS_CHECKLIST.txt` 的 S01–S30 覆盖关系；本次仅修改文档，未运行代码测试。
-- `python -m pytest`：86 passed（覆盖状态机、JSON 文件状态仓储、最小内部事件协议、Runtime 输入编排、内容块模型协议、有界 Agent Loop、统一 logging、受控工具框架、DeepSeek Provider、多轮工具调用闭环、最小交互式启动入口与只读文件列表工具）。
+- `python -m pytest`：96 passed（覆盖状态机、JSON 文件状态仓储、最小内部事件协议、Runtime 输入编排、内容块模型协议、有界 Agent Loop、统一 logging、受控工具框架、DeepSeek Provider、多轮工具调用闭环、最小交互式启动入口与只读文件工具）。
 - `python -m ruff check src tests`：通过。
 
 ## 下一步
 
-- 继续改进版 `learnClaude/s02_tool_use` 的第 2 小步：新增受同一工作区边界保护的 `read_file` 只读工具，支持明确的行数限制与输出大小上限；暂不开放 PowerShell、文件写入或编辑能力，等待 Permission 管线落地。
+- 继续改进版 `learnClaude/s02_tool_use` 的第 3 小步：为现有 `ToolExecutor` 补齐 JSON Schema 参数类型与未知字段校验，再评估只读 `glob` 是否仍有必要；暂不开放 PowerShell、文件写入或编辑能力，等待 Permission 管线落地。

@@ -15,7 +15,7 @@ from local_dev_agent.runtime.loop import AgentLoopResult
 from local_dev_agent.storage.json_state_repository import JsonFileStateRepository
 from local_dev_agent.storage.ports import StateRepository
 from local_dev_agent.tools import ToolRegistry
-from local_dev_agent.tools.builtin import ListFilesTool
+from local_dev_agent.tools.builtin import ListFilesTool, ReadFileTool
 
 
 def execute_prompt(
@@ -37,14 +37,22 @@ def create_tool_registry(workspace: Path) -> ToolRegistry:
 
     registry = ToolRegistry()
     registry.register(ListFilesTool(workspace))
+    registry.register(ReadFileTool(workspace))
     return registry
+
+
+def default_workspace() -> Path:
+    """返回项目内固定的演示工作区，避免终端当前目录改变工具边界。"""
+
+    project_root = Path(__file__).resolve().parents[2]
+    return (project_root / "sandbox").resolve()
 
 
 def main() -> None:
     """启动交互式 Demo：每条输入创建一个 Run，并打印最终文本。"""
 
     load_dotenv()
-    workspace = Path.cwd().resolve()
+    workspace = default_workspace()
     configure_logging(log_directory=workspace / "var" / "logs")
     repository = JsonFileStateRepository(workspace / "var" / "state")
     session = SessionState.create(

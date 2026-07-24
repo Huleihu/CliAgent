@@ -55,10 +55,12 @@ model = DeepSeekAnthropicModelClient(DeepSeekSettings.from_environment())
 python -m local_dev_agent
 ```
 
-程序会创建一个本地 Session，并对每条终端输入创建一个 Run。输入 `q`、
-`exit` 或空行可退出；运行状态和日志分别保存在 `var/state/`、`var/logs/`。
-当前 Demo 默认提供受工作区边界保护的 `list_files` 只读工具；它只返回相对文件
-路径，不读取内容、不写入文件，也不执行命令。
+程序会创建一个本地 Session，并对每条终端输入创建一个 Run。默认工作区固定为
+项目根目录下的 `sandbox/`，输入 `q`、`exit` 或空行可退出；运行状态和日志分别
+保存在 `sandbox/var/state/`、`sandbox/var/logs/`。
+当前 Demo 默认提供受工作区边界保护的 `list_files` 与 `read_file` 只读工具；前者
+只返回相对文件路径，后者只读取有限行数和有限字符数的 UTF-8 文本。两者均不会写入
+文件或执行命令。
 
 ## 常用命令
 
