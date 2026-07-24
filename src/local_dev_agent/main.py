@@ -8,8 +8,10 @@ from dotenv import load_dotenv
 
 from local_dev_agent.domain.messages import UserInputEvent
 from local_dev_agent.domain.state import SessionState
+from local_dev_agent.hooks import HookEvent, HookRegistry, HookRunner
 from local_dev_agent.models import DeepSeekAnthropicModelClient, DeepSeekSettings, ModelClient
 from local_dev_agent.observability import configure_logging
+from local_dev_agent.permissions import PermissionHook, SimplePermissionPolicy
 from local_dev_agent.runtime import MinimalAgentLoop, UserInputRuntimeService
 from local_dev_agent.runtime.loop import AgentLoopResult
 from local_dev_agent.storage.json_state_repository import JsonFileStateRepository
@@ -42,6 +44,17 @@ def create_tool_registry(workspace: Path) -> ToolRegistry:
     return registry
 
 
+def create_permission_hook_runner(workspace: Path) -> HookRunner:
+    """组装 learnClaudeCode S3 风格的默认执行前权限检查。"""
+
+    registry = HookRegistry()
+    registry.register(
+        HookEvent.PRE_TOOL_USE,
+        PermissionHook(SimplePermissionPolicy(workspace)),
+    )
+    return HookRunner(registry)
+
+
 def default_workspace() -> Path:
     """返回项目内固定的演示工作区，避免终端当前目录改变工具边界。"""
 
@@ -66,11 +79,13 @@ def main() -> None:
     model: ModelClient = DeepSeekAnthropicModelClient(
         DeepSeekSettings.from_environment()
     )
+    tool_registry = create_tool_registry(workspace)
     loop = MinimalAgentLoop(
         repository,
         model,
-        create_tool_registry(workspace),
+        tool_registry,
         conversation_repository,
+        hook_runner=create_permission_hook_runner(workspace),
     )
 
     print("Local Dev Agent")

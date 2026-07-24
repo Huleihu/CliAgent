@@ -2,6 +2,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from local_dev_agent.domain.state import SessionState
+from local_dev_agent.hooks import HookDecision, HookEvent, PreToolUseContext
+from local_dev_agent.main import create_permission_hook_runner
 from local_dev_agent.main import create_tool_registry
 from local_dev_agent.main import default_workspace
 from local_dev_agent.main import execute_prompt
@@ -9,6 +11,7 @@ from local_dev_agent.models.fake import FakeModel
 from local_dev_agent.models.ports import ModelResponse
 from local_dev_agent.runtime.loop import MinimalAgentLoop
 from local_dev_agent.storage.json_state_repository import JsonFileStateRepository
+from local_dev_agent.tools import ToolCallRequest
 
 
 def test_execute_prompt_connects_input_service_to_agent_loop(tmp_path) -> None:
@@ -45,6 +48,26 @@ def test_create_tool_registry_registers_the_read_only_file_listing_tool(tmp_path
         "list_files",
         "read_file",
     ]
+
+
+def test_create_permission_hook_runner_registers_the_s3_policy(tmp_path) -> None:
+    request = ToolCallRequest(
+        name="bash",
+        arguments={"command": "sudo reboot"},
+    )
+
+    result = create_permission_hook_runner(tmp_path).trigger(
+        HookEvent.PRE_TOOL_USE,
+        PreToolUseContext(
+            session_id="session-1",
+            run_id="run-1",
+            step_id="step-1",
+            request=request,
+        ),
+    )
+
+    assert result.decision is HookDecision.BLOCK
+    assert "sudo" in result.message  # type: ignore[operator]
 
 
 def test_default_workspace_is_the_project_sandbox_directory() -> None:

@@ -10,6 +10,7 @@
 - 已完成 S4 的第 5 个教学式小步：`UserPromptSubmit` 已接入 Agent Loop；用户消息保存后、首次模型调用前触发观察型 Hook，Hook 不改变既有提示词或模型调用。
 - 已完成 S4 的第 6 个教学式小步：`Stop` 已接入 Agent Loop；最终模型响应确定后、Run 完成前触发观察型 Hook，Hook 不阻止收尾或强制续跑。
 - 已完成当前范围的 S4 Hook 核心闭环：用户输入、工具执行前后和正常停止四个事件均可注册与触发；当前刻意不支持输入改写、执行后结果改写和 Stop 强制续跑。
+- 已完成 `learnClaude/s03_permission` 的简单权限闭环：工具参数校验通过后由 `PreToolUse` 依次执行硬拒绝、风险规则和用户确认；当前保留 S3 的未命中默认允许语义，不包含权限持久化、多来源配置或审批状态机。
 - 使用 Conda 环境 `local-dev-agent`（Python 3.13）。
 
 ## 已完成
@@ -108,15 +109,19 @@
 - `MinimalAgentLoop` 现保留可选 `HookRunner`，在用户消息追加到内存对话并持久化到 Transcript 后触发 `UserPromptSubmit`；Hook 回调失败只记录关联 WARNING 日志，不影响模型调用。
 - `UserPromptSubmit` 保持观察语义：Hook 的 `block` 仅停止同事件后续 Hook，不撤销已保存输入，也不改写发送给模型的内容；添加关联标识与提示词不变性测试。
 - `Stop` 在最终模型 Step 成功保存后、Run 转为 `completed` 前触发，向 Hook 提供最终响应和完整关联标识；Hook 异常只记录 WARNING，`block` 不阻止 Run 收尾。添加测试验证 Hook 观察到持久化 Run 仍为 `running`，返回后才完成。
+- 新增 `local_dev_agent.permissions`：以不可变 `PermissionContext`、`PermissionResult` 和可替换 `PermissionPolicy` 隔离权限判断；终端确认通过可注入的 `ApprovalPrompt` 回调完成，测试不依赖真实输入。
+- 新增 `SimplePermissionPolicy`：`bash` 命中硬拒绝模式时直接拒绝，工作区外写入和潜在破坏性 Bash 命令先询问用户，其余调用默认允许；硬拒绝优先于用户确认。
+- 新增 `PermissionHook` 并在 CLI 默认装配到 `PreToolUse`：权限拒绝沿用既有 `ToolHookBlockedError` 结构化回填，工具实现不会运行且保留原始 `call_id`；当前 CLI 仅注册 `list_files`、`read_file`，因此日常只读行为不变。
+- 添加简单权限单元测试，覆盖结果语义、上下文不可变性、默认允许、硬拒绝优先级、风险命令确认、工作区外写入确认、终端默认拒绝、Hook 阻止执行和 CLI 权限装配。
 
 ## 验证
 
 - `anthropic`、`python-dotenv`、`pytest` 可在 Conda 环境中导入。
 - `ruff` 可运行。
 - 已人工核对 `TDD.md` 与 `AGENT_REQUIREMENTS_CHECKLIST.txt` 的 S01–S30 覆盖关系；本次仅修改文档，未运行代码测试。
-- `python -m pytest`：129 passed（覆盖状态机、JSON 文件状态仓储、会话 Transcript、最小内部事件协议、Runtime 输入编排、内容块模型协议、有界 Agent Loop、统一 logging、受控工具框架、DeepSeek Provider、多轮工具调用闭环、最小交互式启动入口、只读文件工具与 Hook 契约、注册、执行前阻止、执行后观察、用户输入观察和停止收尾观察）。
+- `python -m pytest`：142 passed（覆盖状态机、JSON 文件状态仓储、会话 Transcript、最小内部事件协议、Runtime 输入编排、内容块模型协议、有界 Agent Loop、统一 logging、受控工具框架、DeepSeek Provider、多轮工具调用闭环、最小交互式启动入口、只读文件工具、Hook 核心闭环与 S3 简单权限策略）。
 - `python -m ruff check src tests`：通过。
 
 ## 下一步
 
-- 由用户检查当前范围的 S4 后，进入 `learnClaude/s03_permission` 的第 1 个教学式小步：定义可替换的 Permission 决策端口与 allow/deny 结果，并通过已完成的 `PreToolUse` Hook 接入工具执行前边界；首先为当前只读工具建立明确的默认允许策略，再为后续写入和 PowerShell 的审批流程预留持久化边界。
+- 由用户检查当前 S3 简单权限闭环；若继续验证真实风险工具，下一教学式小步应只新增一个受工作区边界限制的写入工具，并复用现有工作区外写入确认规则，暂不同时引入 PowerShell。
