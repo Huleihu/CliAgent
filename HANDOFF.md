@@ -3,6 +3,7 @@
 ## 当前状态
 
 - 已完成 Phase 1 的第二十个教学式迭代：状态机、JSON 文件状态仓储、最小内部事件协议、Runtime 输入编排、内容块模型协议、有界 Agent Loop、统一 logging、受控工具框架、DeepSeek 真实模型适配、多轮工具调用闭环、最小交互式启动入口、真实只读文件工具、跨 Run 会话历史与统一参数校验。
+- 已完成 S4 的第 1 个教学式小步：定义了独立 Hook 包的事件、不可变上下文和结构化控制结果契约；尚未注册或触发 Hook，因此现有 Runtime 与工具执行行为保持不变。
 - 使用 Conda 环境 `local-dev-agent`（Python 3.13）。
 
 ## 已完成
@@ -86,15 +87,18 @@
 - 添加消息 Transcript 的跨实例恢复、损坏文件、缺失历史，以及跨 Run 复用已发现文件并直接调用 `read_file` 的闭环测试。
 - 新增 `argument_validator`：`ToolExecutor` 现在在 Handler 前统一校验现有工具 Schema 所需的对象、字符串、整数、布尔值、数组、嵌套对象、必填字段与未知字段；无效调用会回填结构化错误且不会进入工具实现。
 - 添加嵌套 JSON Schema 校验测试，覆盖正确调用、错误类型、未知字段、数组元素错误和嵌套必填字段遗漏。
+- 新增 `local_dev_agent.hooks` 契约包：`HookEvent` 覆盖用户输入、工具执行前后与停止四个生命周期事件；四类事件使用各自的冻结上下文，复用既有 `ToolCallRequest`、`ToolCallResult` 和 `ModelResponse`，不复制或放宽现有协议。
+- 新增 `HookResult` 与 `HookDecision`：当前明确区分 `continue` 和带中文原因的 `block`，为下一步注册表和未来 S3 的 `PreToolUse` 权限适配保留稳定边界。
+- 添加 Hook 契约单元测试，覆盖事件值、上下文关联与不可变性、非法关联标识、协议对象类型和控制结果组合。
 
 ## 验证
 
 - `anthropic`、`python-dotenv`、`pytest` 可在 Conda 环境中导入。
 - `ruff` 可运行。
 - 已人工核对 `TDD.md` 与 `AGENT_REQUIREMENTS_CHECKLIST.txt` 的 S01–S30 覆盖关系；本次仅修改文档，未运行代码测试。
-- `python -m pytest`：101 passed（覆盖状态机、JSON 文件状态仓储、会话 Transcript、最小内部事件协议、Runtime 输入编排、内容块模型协议、有界 Agent Loop、统一 logging、受控工具框架、DeepSeek Provider、多轮工具调用闭环、最小交互式启动入口与只读文件工具）。
+- `python -m pytest`：112 passed（覆盖状态机、JSON 文件状态仓储、会话 Transcript、最小内部事件协议、Runtime 输入编排、内容块模型协议、有界 Agent Loop、统一 logging、受控工具框架、DeepSeek Provider、多轮工具调用闭环、最小交互式启动入口、只读文件工具与 Hook 契约）。
 - `python -m ruff check src tests`：通过。
 
 ## 下一步
 
-- 进入 `learnClaude/s03_permission` 的第 1 小步：定义可替换的 Permission 决策端口与 allow/deny 结果，在任何工具 Handler 前执行；首先为只读工具建立明确的默认允许策略，再为后续写入和 PowerShell 的审批流程预留持久化边界。Transcript 的预算、压缩与敏感信息处理留给后续 Context 管理小步。
+- 进入 S4 的第 2 个教学式小步：实现 `Hook` 端口、按事件注册的 `HookRegistry` 与按注册顺序触发的 `HookRunner`；本步仍不接入 Runtime 或工具执行。随后再依次接入 `PreToolUse`、`PostToolUse`、用户输入与停止事件，并在 S3 中将权限策略接入 `PreToolUse`。
