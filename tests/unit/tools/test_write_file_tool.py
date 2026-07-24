@@ -24,6 +24,16 @@ def test_write_file_overwrites_an_existing_regular_file(tmp_path) -> None:
     assert target_file.read_text(encoding="utf-8") == "新内容"
 
 
+def test_write_file_preserves_the_given_utf8_line_endings(tmp_path) -> None:
+    content = "第一行\r\n第二行\n"
+    tool = WriteFileTool(tmp_path)
+
+    result = tool.run({"path": "lines.txt", "content": content})
+
+    assert result == {"path": "lines.txt", "bytes_written": len(content.encode("utf-8"))}
+    assert (tmp_path / "lines.txt").read_bytes() == content.encode("utf-8")
+
+
 @pytest.mark.parametrize("path", ["..", "../outside.txt", "/tmp/outside.txt"])
 def test_write_file_rejects_workspace_escape_paths(tmp_path, path) -> None:
     tool = WriteFileTool(tmp_path)

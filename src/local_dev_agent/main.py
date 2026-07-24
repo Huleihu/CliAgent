@@ -18,7 +18,12 @@ from local_dev_agent.storage.json_state_repository import JsonFileStateRepositor
 from local_dev_agent.storage.json_conversation_repository import JsonFileConversationRepository
 from local_dev_agent.storage.ports import StateRepository
 from local_dev_agent.tools import ToolRegistry
-from local_dev_agent.tools.builtin import ListFilesTool, ReadFileTool, WriteFileTool
+from local_dev_agent.tools.builtin import (
+    EditFileTool,
+    ListFilesTool,
+    ReadFileTool,
+    WriteFileTool,
+)
 
 
 def execute_prompt(
@@ -42,6 +47,7 @@ def create_tool_registry(workspace: Path) -> ToolRegistry:
     registry.register(ListFilesTool(workspace))
     registry.register(ReadFileTool(workspace))
     registry.register(WriteFileTool(workspace))
+    registry.register(EditFileTool(workspace))
     return registry
 
 

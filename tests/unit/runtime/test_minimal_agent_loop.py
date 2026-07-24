@@ -34,7 +34,12 @@ from local_dev_agent.runtime.loop import MinimalAgentLoop
 from local_dev_agent.storage.json_state_repository import JsonFileStateRepository
 from local_dev_agent.storage.json_conversation_repository import JsonFileConversationRepository
 from local_dev_agent.tools import FakeTool, ToolDefinition, ToolRegistry
-from local_dev_agent.tools.builtin import ListFilesTool, ReadFileTool, WriteFileTool
+from local_dev_agent.tools.builtin import (
+    EditFileTool,
+    ListFilesTool,
+    ReadFileTool,
+    WriteFileTool,
+)
 
 
 class ScriptedModel:
@@ -441,6 +446,62 @@ def test_minimal_agent_loop_returns_the_real_write_file_result(tmp_path) -> None
     assert tool_result.content == {"path": "notes/todo.txt", "bytes_written": 12}
     assert (workspace / "notes" / "todo.txt").read_text(encoding="utf-8") == "完成测试"
     assert result.response.text == "已创建待办文件。"
+
+
+def test_minimal_agent_loop_returns_the_real_edit_file_result(tmp_path) -> None:
+    timestamp = datetime(2026, 7, 24, 10, 45, tzinfo=timezone.utc)
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    target_file = workspace / "status.txt"
+    target_file.write_text("待办\n待办", encoding="utf-8")
+    repository = JsonFileStateRepository(tmp_path / "state")
+    session = SessionState.create(
+        session_id="session-1",
+        tenant_id="tenant-1",
+        user_id="user-1",
+        project_id=str(workspace),
+        created_at=timestamp,
+    )
+    repository.save_session(session)
+    start = UserInputRuntimeService(repository).handle(
+        UserInputEvent.create(
+            session_id=session.session_id,
+            content="修改状态文件。",
+            occurred_at=timestamp,
+        )
+    )
+    registry = ToolRegistry()
+    registry.register(EditFileTool(workspace))
+    model = ScriptedModel(
+        (
+            ModelResponse(
+                stop_reason=StopReason.TOOL_USE,
+                content=(
+                    ToolUseBlock(
+                        tool_use_id="toolu-1",
+                        name="edit_file",
+                        input={
+                            "path": "status.txt",
+                            "old_text": "待办",
+                            "new_text": "进行中",
+                        },
+                    ),
+                ),
+            ),
+            ModelResponse.text_completion("已修改状态文件。"),
+        )
+    )
+
+    result = MinimalAgentLoop(repository, model, registry).execute(
+        start,
+        occurred_at=timestamp,
+    )
+
+    tool_result = model.requests[1].conversation[2].content[0]
+    assert isinstance(tool_result, ToolResultBlock)
+    assert tool_result.content == {"path": "status.txt", "replacements": 1}
+    assert target_file.read_text(encoding="utf-8") == "进行中\n待办"
+    assert result.response.text == "已修改状态文件。"
 
 
 def test_minimal_agent_loop_reuses_persisted_session_history_across_runs(tmp_path) -> None:

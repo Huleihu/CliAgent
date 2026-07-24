@@ -5,9 +5,10 @@ from __future__ import annotations
 from collections.abc import Mapping
 from pathlib import Path
 
-from ..errors import ToolExecutionError, ToolValidationError
+from ..errors import ToolValidationError
 from ..ports import Tool
 from ..schema import ToolDefinition
+from ..text_files import read_utf8_text
 from ..workspace import WorkspaceBoundary
 
 
@@ -62,7 +63,7 @@ class ReadFileTool(Tool):
             maximum=self._MAX_MAX_LINES,
         )
         target_file = self._workspace.resolve_file(path)
-        text = self._read_utf8_text(target_file, path)
+        text = read_utf8_text(target_file, path)
         lines = text.splitlines()
         selected_lines = lines[start_line - 1 : start_line - 1 + max_lines]
         content = "\n".join(selected_lines)
@@ -101,16 +102,3 @@ class ReadFileTool(Tool):
         if maximum is not None and value > maximum:
             raise ToolValidationError(f"字段“{field_name}”不能大于 {maximum}。")
         return value
-
-    @staticmethod
-    def _read_utf8_text(target_file: Path, path: str) -> str:
-        try:
-            data = target_file.read_bytes()
-        except OSError as error:
-            raise ToolExecutionError(f"无法读取文件：{path}。") from error
-        if b"\x00" in data:
-            raise ToolExecutionError(f"文件不是可读取的 UTF-8 文本：{path}。")
-        try:
-            return data.decode("utf-8")
-        except UnicodeDecodeError as error:
-            raise ToolExecutionError(f"文件不是可读取的 UTF-8 文本：{path}。") from error

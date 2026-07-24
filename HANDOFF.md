@@ -12,6 +12,7 @@
 - 已完成当前范围的 S4 Hook 核心闭环：用户输入、工具执行前后和正常停止四个事件均可注册与触发；当前刻意不支持输入改写、执行后结果改写和 Stop 强制续跑。
 - 已完成 `learnClaude/s03_permission` 的简单权限闭环：工具参数校验通过后由 `PreToolUse` 依次执行硬拒绝、风险规则和用户确认；当前保留 S3 的未命中默认允许语义，不包含权限持久化、多来源配置或审批状态机。
 - 已完成 `learnClaude/s02_tool_use` 的写入工具小步：CLI 现注册受工作区边界限制的 `write_file`，可创建父目录或覆盖工作区内普通 UTF-8 文本文件；工作区外路径仍由权限策略和文件边界共同拒绝。
+- 已完成 `learnClaude/s02_tool_use` 的编辑工具小步：CLI 现注册 `edit_file`，仅替换工作区内既有 UTF-8 文本文件中的首次精确非空匹配；允许空替换文本以删除内容。
 - 使用 Conda 环境 `local-dev-agent`（Python 3.13）。
 
 ## 已完成
@@ -116,15 +117,17 @@
 - 添加简单权限单元测试，覆盖结果语义、上下文不可变性、默认允许、硬拒绝优先级、风险命令确认、工作区外写入确认、终端默认拒绝、Hook 阻止执行和 CLI 权限装配。
 - 新增 `WorkspaceBoundary.resolve_write_file()` 与 `WriteFileTool`：写入工具仅接受工作区内相对路径，拒绝绝对路径、上级目录、解析后越界路径和目录目标；目标文件可不存在，工具会创建其父目录并以 UTF-8 写入完整内容，返回规范化相对路径和实际字节数。
 - CLI 默认注册 `write_file`；添加工具创建、父目录、覆盖写入、边界拒绝、参数校验和 CLI 注册测试，并添加真实 Agent Loop 写入与结构化结果回填闭环测试。
+- 提取 `text_files.read_utf8_text()` 供读取和编辑工具共享，统一拒绝二进制或无效 UTF-8 内容；`WriteFileTool` 与 `EditFileTool` 使用显式 UTF-8 字节写入，保留原始换行形式，避免 Windows 文本模式重复转换 `\r\n`。
+- 新增 `EditFileTool`：仅编辑工作区内既有普通 UTF-8 文件，`old_text` 必须非空且仅替换首次精确匹配，`new_text` 可为空以删除内容；找不到匹配文本时返回结构化工具失败。CLI 默认注册该工具，并添加首次替换、删除、路径边界、无效参数、UTF-8 拒绝和真实 Agent Loop 回填测试。
 
 ## 验证
 
 - `anthropic`、`python-dotenv`、`pytest` 可在 Conda 环境中导入。
 - `ruff` 可运行。
 - 已人工核对 `TDD.md` 与 `AGENT_REQUIREMENTS_CHECKLIST.txt` 的 S01–S30 覆盖关系；本次仅修改文档，未运行代码测试。
-- `python -m pytest`：153 passed（覆盖状态机、JSON 文件状态仓储、会话 Transcript、最小内部事件协议、Runtime 输入编排、内容块模型协议、有界 Agent Loop、统一 logging、受控工具框架、DeepSeek Provider、多轮工具调用闭环、最小交互式启动入口、读写文件工具、Hook 核心闭环与 S3 简单权限策略）。
+- `python -m pytest`：166 passed（覆盖状态机、JSON 文件状态仓储、会话 Transcript、最小内部事件协议、Runtime 输入编排、内容块模型协议、有界 Agent Loop、统一 logging、受控工具框架、DeepSeek Provider、多轮工具调用闭环、最小交互式启动入口、读写编辑文件工具、Hook 核心闭环与 S3 简单权限策略）。
 - `python -m ruff check src tests`：通过。
 
 ## 下一步
 
-- 由用户检查 `write_file` 小步；若继续实现 `learnClaude/s02_tool_use`，下一教学式小步应只新增 `edit_file`，复用工作区边界并保持“仅替换首次精确匹配文本”的明确语义，暂不同时引入 PowerShell。
+- 由用户检查 `edit_file` 小步；`learnClaude/s02_tool_use` 的 `read_file` 与 `glob` 已分别由更受控的 `ReadFileTool`、`ListFilesTool` 覆盖。若继续新增命令执行能力，应先单独设计受控 PowerShell 工具边界与审批规则，不直接移植教学版的 `bash(shell=True)`。

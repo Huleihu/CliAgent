@@ -50,7 +50,7 @@ class WriteFileTool(Tool):
         target_file = self._workspace.resolve_write_file(path)
         try:
             target_file.parent.mkdir(parents=True, exist_ok=True)
-            target_file.write_text(content, encoding="utf-8")
+            target_file.write_bytes(content.encode("utf-8"))
         except OSError as error:
             raise ToolExecutionError(f"无法写入文件：{path}。") from error
 
