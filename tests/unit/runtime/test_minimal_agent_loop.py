@@ -15,6 +15,7 @@ from local_dev_agent.hooks import (
     HookResult,
     HookRunner,
     PreToolUseContext,
+    StopContext,
     UserPromptSubmitContext,
 )
 from local_dev_agent.models.fake import FakeModel
@@ -76,6 +77,24 @@ class RecordingUserPromptHook:
     def handle(self, context: UserPromptSubmitContext) -> HookResult:
         self.contexts.append(context)
         return HookResult.block("停止后续输入审计。")
+
+
+class RecordingStopHook:
+    """记录完成前运行状态的测试 Hook。"""
+
+    name = "record-stop"
+
+    def __init__(self, repository: JsonFileStateRepository) -> None:
+        self._repository = repository
+        self.contexts: list[StopContext] = []
+        self.observed_run_statuses: list[RunStatus] = []
+
+    def handle(self, context: StopContext) -> HookResult:
+        self.contexts.append(context)
+        run = self._repository.get_run(context.run_id)
+        assert run is not None
+        self.observed_run_statuses.append(run.status)
+        return HookResult.block("停止后续收尾审计。")
 
 
 def test_minimal_agent_loop_completes_a_text_response_and_persists_states(
@@ -157,6 +176,43 @@ def test_minimal_agent_loop_triggers_user_prompt_hook_without_changing_the_promp
     assert hook.contexts[0].prompt == event.content
     assert model.requests[0].conversation[0].content[0].text == event.content
     assert result.response.text == "项目状态正常。"
+
+
+def test_minimal_agent_loop_triggers_stop_hook_before_persisting_completion(tmp_path) -> None:
+    timestamp = datetime(2026, 7, 24, 15, 0, tzinfo=timezone.utc)
+    repository = JsonFileStateRepository(tmp_path)
+    session = SessionState.create(
+        session_id="session-1",
+        tenant_id="tenant-1",
+        user_id="user-1",
+        project_id="project-1",
+        created_at=timestamp,
+    )
+    repository.save_session(session)
+    event = UserInputEvent.create(
+        session_id=session.session_id,
+        content="检查项目状态。",
+        occurred_at=timestamp,
+    )
+    start = UserInputRuntimeService(repository).handle(event)
+    hook = RecordingStopHook(repository)
+    hook_registry = HookRegistry()
+    hook_registry.register(HookEvent.STOP, hook)
+    response = ModelResponse.text_completion("项目状态正常。")
+    model = FakeModel(response)
+
+    result = MinimalAgentLoop(
+        repository,
+        model,
+        hook_runner=HookRunner(hook_registry),
+    ).execute(start, occurred_at=timestamp)
+
+    assert hook.contexts[0].session_id == session.session_id
+    assert hook.contexts[0].run_id == start.run.run_id
+    assert hook.contexts[0].step_id == start.first_step.step_id
+    assert hook.contexts[0].response is response
+    assert hook.observed_run_statuses == [RunStatus.RUNNING]
+    assert result.run.status is RunStatus.COMPLETED
 
 
 def test_minimal_agent_loop_executes_tool_and_returns_its_result_to_the_model(

@@ -19,6 +19,7 @@ from local_dev_agent.hooks import (
     HookExecutionError,
     HookRunner,
     PreToolUseContext,
+    StopContext,
     UserPromptSubmitContext,
 )
 from local_dev_agent.models import (
@@ -177,6 +178,13 @@ class MinimalAgentLoop:
 
             current_step = self._succeed_step(current_step, timestamp)
             completed_steps.append(current_step)
+            self._trigger_stop(
+                session_id=start.session.session_id,
+                run_id=running_run.run_id,
+                step_id=current_step.step_id,
+                response=response,
+                log_context=log_context,
+            )
             completed_run = running_run.transition_to(
                 RunStatus.COMPLETED,
                 occurred_at=timestamp,
@@ -237,6 +245,36 @@ class MinimalAgentLoop:
         except HookExecutionError:
             logger.warning(
                 "用户输入提交 Hook 失败，不影响模型调用。",
+                exc_info=True,
+                extra=log_context,
+            )
+
+    def _trigger_stop(
+        self,
+        *,
+        session_id: str,
+        run_id: str,
+        step_id: str,
+        response: ModelResponse,
+        log_context: dict[str, str],
+    ) -> None:
+        """在运行完成前触发观察型 Stop Hook，不允许其阻止收尾。"""
+
+        if self._hook_runner is None:
+            return
+        try:
+            self._hook_runner.trigger(
+                HookEvent.STOP,
+                StopContext(
+                    session_id=session_id,
+                    run_id=run_id,
+                    step_id=step_id,
+                    response=response,
+                ),
+            )
+        except HookExecutionError:
+            logger.warning(
+                "停止 Hook 失败，不影响运行完成。",
                 exc_info=True,
                 extra=log_context,
             )
