@@ -22,6 +22,7 @@ from local_dev_agent.runtime.input_service import UserInputRuntimeService
 from local_dev_agent.runtime.loop import MinimalAgentLoop
 from local_dev_agent.storage.json_state_repository import JsonFileStateRepository
 from local_dev_agent.tools import FakeTool, ToolDefinition, ToolRegistry
+from local_dev_agent.tools.builtin import ListFilesTool
 
 
 class ScriptedModel:
@@ -154,6 +155,56 @@ def test_minimal_agent_loop_executes_tool_and_returns_its_result_to_the_model(
         StepStatus.SUCCEEDED,
         StepStatus.SUCCEEDED,
     ]
+
+
+def test_minimal_agent_loop_returns_listed_files_from_the_real_read_only_tool(tmp_path) -> None:
+    timestamp = datetime(2026, 7, 24, 9, 0, tzinfo=timezone.utc)
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    (workspace / "README.md").write_text("项目说明", encoding="utf-8")
+    repository = JsonFileStateRepository(tmp_path / "state")
+    session = SessionState.create(
+        session_id="session-1",
+        tenant_id="tenant-1",
+        user_id="user-1",
+        project_id=str(workspace),
+        created_at=timestamp,
+    )
+    repository.save_session(session)
+    start = UserInputRuntimeService(repository).handle(
+        UserInputEvent.create(
+            session_id=session.session_id,
+            content="列出 Markdown 文件。",
+            occurred_at=timestamp,
+        )
+    )
+    registry = ToolRegistry()
+    registry.register(ListFilesTool(workspace))
+    model = ScriptedModel(
+        (
+            ModelResponse(
+                stop_reason=StopReason.TOOL_USE,
+                content=(
+                    ToolUseBlock(
+                        tool_use_id="toolu-1",
+                        name="list_files",
+                        input={"pattern": "*.md"},
+                    ),
+                ),
+            ),
+            ModelResponse.text_completion("找到 README.md。"),
+        )
+    )
+
+    result = MinimalAgentLoop(repository, model, registry).execute(
+        start,
+        occurred_at=timestamp,
+    )
+
+    tool_result = model.requests[1].conversation[2].content[0]
+    assert isinstance(tool_result, ToolResultBlock)
+    assert tool_result.content == {"files": ["README.md"], "truncated": False}
+    assert result.response.text == "找到 README.md。"
 
 
 def test_minimal_agent_loop_exhausts_after_the_configured_model_turn_limit(

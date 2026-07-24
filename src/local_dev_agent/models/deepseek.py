@@ -43,6 +43,9 @@ class DeepSeekAnthropicModelClient:
             "model": self._settings.model,
             "max_tokens": self._settings.max_tokens,
             "messages": messages,
+            # 当前内部协议不保存推理内容。显式关闭 thinking，避免工具回填时
+            # 丢失 DeepSeek 要求继续传递的思考块，导致后续响应失去可见内容。
+            "thinking": {"type": "disabled"},
         }
         if request.tools:
             request_parameters["tools"] = [
@@ -110,11 +113,19 @@ class DeepSeekAnthropicModelClient:
             raise DeepSeekModelError("DeepSeek 返回了不受支持的停止原因。") from error
 
         try:
+            content_types = tuple(
+                getattr(block, "type", "未知") for block in response.content
+            )
             content = tuple(
                 self._map_content_block(block)
                 for block in response.content
                 if getattr(block, "type", None) != "thinking"
             )
+            if not content:
+                types = "、".join(str(content_type) for content_type in content_types)
+                raise DeepSeekModelError(
+                    f"DeepSeek 仅返回了思考内容或空内容，内容类型：{types or '无'}。"
+                )
             return ModelResponse(stop_reason=stop_reason, content=content)
         except DeepSeekModelError:
             raise

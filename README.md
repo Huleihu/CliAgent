@@ -33,7 +33,9 @@ Copy-Item .env.example .env
 ```
 
 当前真实模型使用 DeepSeek 的 Anthropic 兼容接口。请在 `.env` 中填写
-`DEEPSEEK_API_KEY`；模型名、接口地址和最大输出 Token 可按需要调整。
+`DEEPSEEK_API_KEY`；模型名、接口地址和最大输出 Token 可按需要调整。当前
+Runtime 为了安全地完成工具结果回填，显式关闭 DeepSeek thinking 模式；推理内容
+不会进入本地状态、日志或后续模型请求。
 运行入口创建模型客户端时，先加载 `.env`，再读取配置：
 
 ```python
@@ -55,7 +57,8 @@ python -m local_dev_agent
 
 程序会创建一个本地 Session，并对每条终端输入创建一个 Run。输入 `q`、
 `exit` 或空行可退出；运行状态和日志分别保存在 `var/state/`、`var/logs/`。
-当前 Demo 仅提供模型文本对话，真实工具会在下一小步注册。
+当前 Demo 默认提供受工作区边界保护的 `list_files` 只读工具；它只返回相对文件
+路径，不读取内容、不写入文件，也不执行命令。
 
 ## 常用命令
 

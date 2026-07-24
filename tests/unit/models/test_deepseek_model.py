@@ -39,6 +39,13 @@ class FakeToolUseContent:
 
 
 @dataclass
+class FakeThinkingContent:
+    """模拟 DeepSeek 返回、但当前 Runtime 不持久化的思考块。"""
+
+    type: str = "thinking"
+
+
+@dataclass
 class FakeMessage:
     """模拟 Anthropic SDK 返回的消息。"""
 
@@ -142,6 +149,7 @@ def test_model_client_maps_a_text_response_and_sends_configured_request() -> Non
             "model": "deepseek-v4-flash",
             "max_tokens": 1024,
             "messages": [{"role": "user", "content": "检查项目状态。"}],
+            "thinking": {"type": "disabled"},
         }
     ]
 
@@ -239,6 +247,7 @@ def test_model_client_serializes_multi_turn_messages_and_tool_results() -> None:
             ],
         },
     ]
+    assert client.messages.calls[0]["thinking"] == {"type": "disabled"}
 
 
 def test_model_client_declares_registered_tool_definitions_when_requested() -> None:
@@ -296,4 +305,16 @@ def test_model_client_rejects_an_unknown_stop_reason() -> None:
     )
 
     with pytest.raises(DeepSeekModelError, match="不受支持的停止原因"):
+        model.generate(_request())
+
+
+def test_model_client_explains_a_thinking_only_response_without_exposing_its_content() -> None:
+    model = DeepSeekAnthropicModelClient(
+        _settings(),
+        client=FakeAnthropicClient(
+            FakeMessage(stop_reason="end_turn", content=[FakeThinkingContent()])
+        ),
+    )
+
+    with pytest.raises(DeepSeekModelError, match="仅返回了思考内容或空内容"):
         model.generate(_request())

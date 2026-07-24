@@ -2,6 +2,7 @@ from datetime import datetime, timezone
 
 from local_dev_agent.domain.state import SessionState
 from local_dev_agent.main import execute_prompt
+from local_dev_agent.main import create_tool_registry
 from local_dev_agent.models.fake import FakeModel
 from local_dev_agent.models.ports import ModelResponse
 from local_dev_agent.runtime.loop import MinimalAgentLoop
@@ -33,3 +34,9 @@ def test_execute_prompt_connects_input_service_to_agent_loop(tmp_path) -> None:
 
     assert result.response.text == "项目状态正常。"
     assert result.session.active_run_id is None
+
+
+def test_create_tool_registry_registers_the_read_only_file_listing_tool(tmp_path) -> None:
+    registry = create_tool_registry(tmp_path)
+
+    assert [definition.name for definition in registry.list_definitions()] == ["list_files"]

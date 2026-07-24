@@ -15,6 +15,7 @@ from local_dev_agent.runtime.loop import AgentLoopResult
 from local_dev_agent.storage.json_state_repository import JsonFileStateRepository
 from local_dev_agent.storage.ports import StateRepository
 from local_dev_agent.tools import ToolRegistry
+from local_dev_agent.tools.builtin import ListFilesTool
 
 
 def execute_prompt(
@@ -29,6 +30,14 @@ def execute_prompt(
     event = UserInputEvent.create(session_id=session.session_id, content=prompt)
     start = UserInputRuntimeService(repository).handle(event)
     return loop.execute(start)
+
+
+def create_tool_registry(workspace: Path) -> ToolRegistry:
+    """组装 CLI 默认可用的低风险工具，避免入口直接依赖工具细节。"""
+
+    registry = ToolRegistry()
+    registry.register(ListFilesTool(workspace))
+    return registry
 
 
 def main() -> None:
@@ -47,7 +56,7 @@ def main() -> None:
     model: ModelClient = DeepSeekAnthropicModelClient(
         DeepSeekSettings.from_environment()
     )
-    loop = MinimalAgentLoop(repository, model, ToolRegistry())
+    loop = MinimalAgentLoop(repository, model, create_tool_registry(workspace))
 
     print("Local Dev Agent")
     print("输入问题并回车发送。输入 q、exit 或空行退出。\n")

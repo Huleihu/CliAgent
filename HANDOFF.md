@@ -2,7 +2,7 @@
 
 ## 当前状态
 
-- 已完成 Phase 1 的第十六个教学式迭代：状态机、JSON 文件状态仓储、最小内部事件协议、Runtime 输入编排、内容块模型协议、有界 Agent Loop、统一 logging、受控工具框架、DeepSeek 真实模型适配、多轮工具调用闭环与最小交互式启动入口。
+- 已完成 Phase 1 的第十七个教学式迭代：状态机、JSON 文件状态仓储、最小内部事件协议、Runtime 输入编排、内容块模型协议、有界 Agent Loop、统一 logging、受控工具框架、DeepSeek 真实模型适配、多轮工具调用闭环、最小交互式启动入口与首个真实只读工具。
 - 使用 Conda 环境 `local-dev-agent`（Python 3.13）。
 
 ## 已完成
@@ -71,15 +71,21 @@
 - 启动入口为同一进程复用一个 Session、每条输入创建一个独立 Run 的最小 s01 Demo；当前尚未跨 Run 保存或复用消息历史，也尚未注册真实工具，二者留给后续小步。
 - 添加启动入口连接测试，覆盖从终端输入编排函数到 Runtime 输入服务和 Agent Loop 的完整无网络连接。
 - 更新 README，说明 `python -m local_dev_agent` 的启动方式、退出命令和本地状态/日志目录。
+- 新增 `WorkspaceBoundary` 与 `ListFilesTool`：仅列出工作区内符合 glob 模式的文件，统一拒绝绝对路径、上级目录和解析后越界的目录；工具不读取内容、不写入文件，也不执行命令。
+- `list_files` 返回稳定排序的工作区相对路径，并通过默认 200、最大 1000 条的结果上限与 `truncated` 标记控制模型上下文大小。
+- 最小 CLI 启动入口现默认注册 `list_files`，真实 Provider 可在工具声明、执行和结果回填之间形成首个只读闭环。
+- 添加 `list_files` 单元测试与真实工具驱动的 Agent Loop 闭环测试，覆盖模式筛选、稳定排序、结果截断、工作区越界拒绝、CLI 注册和结果回填。
+- 修复 DeepSeek 工具结果回填后的 thinking 兼容性：Provider 现在显式关闭 thinking 模式，避免当前不持久化推理内容的内部协议在后续请求中丢失必要内容，导致模型仅返回思考块或空内容。
+- Provider 对意外的仅思考或空响应会报告内容类型摘要，不记录思考正文；补充请求参数和仅思考响应的单元测试。
 
 ## 验证
 
 - `anthropic`、`python-dotenv`、`pytest` 可在 Conda 环境中导入。
 - `ruff` 可运行。
 - 已人工核对 `TDD.md` 与 `AGENT_REQUIREMENTS_CHECKLIST.txt` 的 S01–S30 覆盖关系；本次仅修改文档，未运行代码测试。
-- `python -m pytest`：76 passed（覆盖状态机、JSON 文件状态仓储、最小内部事件协议、Runtime 输入编排、内容块模型协议、有界 Agent Loop、统一 logging、受控工具框架、DeepSeek Provider、多轮工具调用闭环与最小交互式启动入口）。
+- `python -m pytest`：86 passed（覆盖状态机、JSON 文件状态仓储、最小内部事件协议、Runtime 输入编排、内容块模型协议、有界 Agent Loop、统一 logging、受控工具框架、DeepSeek Provider、多轮工具调用闭环、最小交互式启动入口与只读文件列表工具）。
 - `python -m ruff check src tests`：通过。
 
 ## 下一步
 
-- 继续改进版 `learnClaude/s01_agent_loop` 的第 5 小步：提供一个受工作区边界限制的只读文件列表工具，并由最小启动入口注册它，使用真实 DeepSeek 验证“模型请求工具 → Runtime 执行 → 结果回填 → 最终文本”的完整 s01 闭环；暂不开放 PowerShell 或文件写入能力。
+- 继续改进版 `learnClaude/s02_tool_use` 的第 2 小步：新增受同一工作区边界保护的 `read_file` 只读工具，支持明确的行数限制与输出大小上限；暂不开放 PowerShell、文件写入或编辑能力，等待 Permission 管线落地。
