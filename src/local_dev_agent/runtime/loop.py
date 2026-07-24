@@ -14,6 +14,7 @@ from local_dev_agent.domain.state import (
     StepStatus,
     StepType,
 )
+from local_dev_agent.hooks import HookRunner, PreToolUseContext
 from local_dev_agent.models import (
     MessageRole,
     ModelClient,
@@ -58,6 +59,7 @@ class MinimalAgentLoop:
         conversation_repository: ConversationRepository | None = None,
         *,
         max_turns: int = 10,
+        hook_runner: HookRunner | None = None,
     ) -> None:
         if max_turns < 1:
             raise ValueError("Agent Loop 的最大模型调用轮次必须大于或等于 1。")
@@ -65,7 +67,7 @@ class MinimalAgentLoop:
         self._model = model
         self._registry = registry or ToolRegistry()
         self._conversation_repository = conversation_repository
-        self._executor = ToolExecutor(self._registry)
+        self._executor = ToolExecutor(self._registry, hook_runner=hook_runner)
         self._max_turns = max_turns
 
     def execute(
@@ -116,6 +118,7 @@ class MinimalAgentLoop:
                 current_step = self._succeed_step(current_step, timestamp)
                 completed_steps.append(current_step)
                 tool_results, tool_steps = self._execute_tools(
+                    session_id=start.session.session_id,
                     run_id=running_run.run_id,
                     tool_blocks=tool_blocks,
                     timestamp=timestamp,
@@ -248,6 +251,7 @@ class MinimalAgentLoop:
     def _execute_tools(
         self,
         *,
+        session_id: str,
         run_id: str,
         tool_blocks: tuple[ToolUseBlock, ...],
         timestamp: datetime,
@@ -265,12 +269,19 @@ class MinimalAgentLoop:
                 "开始工具调用。",
                 extra={**log_context, "step_id": tool_step.step_id},
             )
+            request = ToolCallRequest(
+                name=block.name,
+                arguments=block.input,
+                call_id=block.tool_use_id,
+            )
             result = self._executor.execute(
-                ToolCallRequest(
-                    name=block.name,
-                    arguments=block.input,
-                    call_id=block.tool_use_id,
-                )
+                request,
+                pre_tool_context=PreToolUseContext(
+                    session_id=session_id,
+                    run_id=run_id,
+                    step_id=tool_step.step_id,
+                    request=request,
+                ),
             )
             tool_steps.append(self._finish_tool_step(tool_step, result, timestamp))
             tool_results.append(self._to_tool_result_block(block, result))

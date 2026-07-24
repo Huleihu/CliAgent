@@ -9,6 +9,13 @@ from local_dev_agent.domain.state import (
     SessionStatus,
     StepStatus,
 )
+from local_dev_agent.hooks import (
+    HookEvent,
+    HookRegistry,
+    HookResult,
+    HookRunner,
+    PreToolUseContext,
+)
 from local_dev_agent.models.fake import FakeModel
 from local_dev_agent.models.ports import (
     MessageRole,
@@ -42,6 +49,19 @@ class ScriptedModel:
         if not self._responses:
             raise AssertionError("测试模型没有更多预设响应。")
         return self._responses.pop(0)
+
+
+class BlockingPreToolHook:
+    """记录关联信息并阻止工具调用的测试 Hook。"""
+
+    name = "block-tool"
+
+    def __init__(self) -> None:
+        self.contexts: list[PreToolUseContext] = []
+
+    def handle(self, context: PreToolUseContext) -> HookResult:
+        self.contexts.append(context)
+        return HookResult.block("测试权限拒绝。")
 
 
 def test_minimal_agent_loop_completes_a_text_response_and_persists_states(
@@ -479,3 +499,73 @@ def test_minimal_agent_loop_returns_tool_failure_to_the_next_model_turn(
         StepStatus.FAILED,
         StepStatus.SUCCEEDED,
     ]
+
+
+def test_minimal_agent_loop_returns_pre_tool_hook_block_to_the_model(tmp_path) -> None:
+    timestamp = datetime(2026, 7, 24, 13, 0, tzinfo=timezone.utc)
+    repository = JsonFileStateRepository(tmp_path)
+    session = SessionState.create(
+        session_id="session-1",
+        tenant_id="tenant-1",
+        user_id="user-1",
+        project_id="project-1",
+        created_at=timestamp,
+    )
+    repository.save_session(session)
+    start = UserInputRuntimeService(repository).handle(
+        UserInputEvent.create(
+            session_id=session.session_id,
+            content="读取 README。",
+            occurred_at=timestamp,
+        )
+    )
+    tool = FakeTool(
+        definition=ToolDefinition(
+            name="read_file",
+            description="读取文本文件。",
+            parameters={
+                "type": "object",
+                "properties": {"path": {"type": "string"}},
+                "required": ["path"],
+            },
+        ),
+        result={"content": "项目说明"},
+    )
+    tool_registry = ToolRegistry()
+    tool_registry.register(tool)
+    hook = BlockingPreToolHook()
+    hook_registry = HookRegistry()
+    hook_registry.register(HookEvent.PRE_TOOL_USE, hook)
+    model = ScriptedModel(
+        (
+            ModelResponse(
+                stop_reason=StopReason.TOOL_USE,
+                content=(
+                    ToolUseBlock(
+                        tool_use_id="toolu-1",
+                        name="read_file",
+                        input={"path": "README.md"},
+                    ),
+                ),
+            ),
+            ModelResponse.text_completion("工具调用已被拒绝。"),
+        )
+    )
+
+    result = MinimalAgentLoop(
+        repository,
+        model,
+        tool_registry,
+        hook_runner=HookRunner(hook_registry),
+    ).execute(start, occurred_at=timestamp)
+
+    tool_result = model.requests[1].conversation[2].content[0]
+    assert isinstance(tool_result, ToolResultBlock)
+    assert tool_result.is_error is True
+    assert tool_result.content["error"]["type"] == "ToolHookBlockedError"  # type: ignore[index]
+    assert tool.calls == []
+    assert hook.contexts[0].session_id == session.session_id
+    assert hook.contexts[0].run_id == start.run.run_id
+    assert hook.contexts[0].step_id != start.first_step.step_id
+    assert hook.contexts[0].request.call_id == "toolu-1"
+    assert result.response.text == "工具调用已被拒绝。"

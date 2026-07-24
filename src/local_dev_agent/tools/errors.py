@@ -25,5 +25,12 @@ class ToolExecutionError(RuntimeError):
     """当工具执行或返回值不符合执行边界时抛出。"""
 
 
+class ToolHookBlockedError(ToolExecutionError):
+    """当执行前 Hook 明确阻止工具调用时抛出。"""
+
+    def __init__(self, reason: str) -> None:
+        super().__init__(f"执行前 Hook 阻止工具调用：{reason}")
+
+
 class ToolDiscoveryError(RuntimeError):
     """当受控工具包无法完成发现时抛出。"""

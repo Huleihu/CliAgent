@@ -4,10 +4,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import ClassVar
+from typing import TYPE_CHECKING, ClassVar
 
-from local_dev_agent.models.ports import ModelResponse
-from local_dev_agent.tools.schema import ToolCallRequest, ToolCallResult
+if TYPE_CHECKING:
+    from local_dev_agent.models.ports import ModelResponse
+    from local_dev_agent.tools.schema import ToolCallRequest, ToolCallResult
 
 from .errors import HookValidationError
 
@@ -72,6 +73,8 @@ class PreToolUseContext:
         _require_text("session_id", self.session_id)
         _require_text("run_id", self.run_id)
         _require_text("step_id", self.step_id)
+        from local_dev_agent.tools.schema import ToolCallRequest
+
         if not isinstance(self.request, ToolCallRequest):
             raise HookValidationError("字段“request”必须是 ToolCallRequest 对象。")
 
@@ -94,6 +97,8 @@ class PostToolUseContext:
         _require_text("session_id", self.session_id)
         _require_text("run_id", self.run_id)
         _require_text("step_id", self.step_id)
+        from local_dev_agent.tools.schema import ToolCallRequest, ToolCallResult
+
         if not isinstance(self.request, ToolCallRequest):
             raise HookValidationError("字段“request”必须是 ToolCallRequest 对象。")
         if not isinstance(self.result, ToolCallResult):
@@ -117,6 +122,8 @@ class StopContext:
         _require_text("session_id", self.session_id)
         _require_text("run_id", self.run_id)
         _require_text("step_id", self.step_id)
+        from local_dev_agent.models.ports import ModelResponse
+
         if not isinstance(self.response, ModelResponse):
             raise HookValidationError("字段“response”必须是 ModelResponse 对象。")
 

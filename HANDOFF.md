@@ -5,6 +5,7 @@
 - 已完成 Phase 1 的第二十个教学式迭代：状态机、JSON 文件状态仓储、最小内部事件协议、Runtime 输入编排、内容块模型协议、有界 Agent Loop、统一 logging、受控工具框架、DeepSeek 真实模型适配、多轮工具调用闭环、最小交互式启动入口、真实只读文件工具、跨 Run 会话历史与统一参数校验。
 - 已完成 S4 的第 1 个教学式小步：定义了独立 Hook 包的事件、不可变上下文和结构化控制结果契约；尚未注册或触发 Hook，因此现有 Runtime 与工具执行行为保持不变。
 - 已完成 S4 的第 2 个教学式小步：实现 Hook 注册与触发基础设施；注册顺序稳定，首个阻止结果会终止该事件的后续回调，但尚未接入 Runtime 或工具执行。
+- 已完成 S4 的第 3 个教学式小步：`PreToolUse` 已接入工具执行边界；工具仅在查找和参数校验通过后触发 Hook，被阻止时不运行工具实现并将结构化失败结果回填模型。
 - 使用 Conda 环境 `local-dev-agent`（Python 3.13）。
 
 ## 已完成
@@ -93,15 +94,19 @@
 - 添加 Hook 契约单元测试，覆盖事件值、上下文关联与不可变性、非法关联标识、协议对象类型和控制结果组合。
 - 新增 `Hook` 端口、`HookRegistry` 与 `HookRunner`：注册表按生命周期事件隔离 Hook，保持注册顺序并拒绝同事件重名；运行器按顺序触发，首个 `block` 会阻止后续回调，回调异常和非法返回值收束为中文 `HookExecutionError`。
 - Hook 上下文通过类级事件标识自描述所属生命周期，运行器拒绝事件与上下文不匹配的调用；添加注册表、触发顺序、阻止短路、上下文错配和回调失败单元测试。
+- `ToolExecutor` 现可选注入 `HookRunner`：已启用时必须提供与当前请求一致的 `PreToolUseContext`，防止调用方绕过未来的安全 Hook；参数校验失败和未知工具仍在 Hook 之前直接返回结构化失败结果。
+- 新增 `ToolHookBlockedError`：执行前 Hook 返回 `block` 时，工具实现不会运行，失败结果保留原始 `call_id` 并正常回填模型；`MinimalAgentLoop` 会构造携带 Session、Run、Tool Step 关联标识的执行前上下文。
+- Hook 契约对模型与工具协议改为仅类型检查时导入、运行时在校验点延迟导入，消除 `Hook → 工具协议 → ToolExecutor → Hook` 的导入环，同时不改变契约类型校验。
+- 添加执行前 Hook 集成测试，覆盖校验先于 Hook、阻止后零工具调用、缺失或错配上下文拒绝执行，以及 Agent Loop 向模型回填 Hook 阻止结果与完整关联标识。
 
 ## 验证
 
 - `anthropic`、`python-dotenv`、`pytest` 可在 Conda 环境中导入。
 - `ruff` 可运行。
 - 已人工核对 `TDD.md` 与 `AGENT_REQUIREMENTS_CHECKLIST.txt` 的 S01–S30 覆盖关系；本次仅修改文档，未运行代码测试。
-- `python -m pytest`：121 passed（覆盖状态机、JSON 文件状态仓储、会话 Transcript、最小内部事件协议、Runtime 输入编排、内容块模型协议、有界 Agent Loop、统一 logging、受控工具框架、DeepSeek Provider、多轮工具调用闭环、最小交互式启动入口、只读文件工具与 Hook 契约、注册和触发）。
+- `python -m pytest`：124 passed（覆盖状态机、JSON 文件状态仓储、会话 Transcript、最小内部事件协议、Runtime 输入编排、内容块模型协议、有界 Agent Loop、统一 logging、受控工具框架、DeepSeek Provider、多轮工具调用闭环、最小交互式启动入口、只读文件工具与 Hook 契约、注册、触发和执行前阻止）。
 - `python -m ruff check src tests`：通过。
 
 ## 下一步
 
-- 进入 S4 的第 3 个教学式小步：将 `PreToolUse` 接入 `ToolExecutor`。先完成工具查找与参数校验，再触发执行前 Hook；Hook 阻止时不调用工具实现，而是产生可回填的结构化失败结果。随后再接入 `PostToolUse`、用户输入和停止事件，并在 S3 中将权限策略接入 `PreToolUse`。
+- 进入 S4 的第 4 个教学式小步：将 `PostToolUse` 接入 `ToolExecutor`。工具执行已收束为 `ToolCallResult` 后触发 Hook，向 Hook 提供冻结的请求和结果；初版仅允许观察与审计，不允许改写已产生的工具结果。随后再接入用户输入和停止事件，并在 S3 中将权限策略接入 `PreToolUse`。

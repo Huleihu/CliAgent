@@ -2,6 +2,13 @@ from dataclasses import FrozenInstanceError
 
 import pytest
 
+from local_dev_agent.hooks import (
+    HookEvent,
+    HookRegistry,
+    HookResult,
+    HookRunner,
+    PreToolUseContext,
+)
 from local_dev_agent.tools import (
     FakeTool,
     FunctionTool,
@@ -236,3 +243,76 @@ def test_discovery_rejects_missing_package_and_invalid_factory() -> None:
             "tests.unit.tools.import_failure_samples",
             ToolRegistry(),
         )
+
+
+class BlockingPreToolHook:
+    """用于验证执行前短路的确定性测试 Hook。"""
+
+    name = "block-read"
+
+    def __init__(self) -> None:
+        self.contexts: list[PreToolUseContext] = []
+
+    def handle(self, context: PreToolUseContext) -> HookResult:
+        self.contexts.append(context)
+        return HookResult.block("测试策略拒绝。")
+
+
+def test_executor_runs_pre_tool_hook_after_validation_and_skips_blocked_tool() -> None:
+    tool = FakeTool(definition=_read_definition(), result={"content": "测试内容"})
+    tool_registry = ToolRegistry()
+    tool_registry.register(tool)
+    hook = BlockingPreToolHook()
+    hook_registry = HookRegistry()
+    hook_registry.register(HookEvent.PRE_TOOL_USE, hook)
+    executor = ToolExecutor(tool_registry, hook_runner=HookRunner(hook_registry))
+    request = ToolCallRequest(
+        name="read_file",
+        arguments={"path": "README.md"},
+        call_id="toolu-1",
+    )
+
+    invalid_result = executor.execute(ToolCallRequest(name="read_file", arguments={}))
+    blocked_result = executor.execute(
+        request,
+        pre_tool_context=PreToolUseContext(
+            session_id="session-1",
+            run_id="run-1",
+            step_id="step-1",
+            request=request,
+        ),
+    )
+
+    assert invalid_result.error["type"] == "ToolValidationError"  # type: ignore[index]
+    assert blocked_result.success is False
+    assert blocked_result.error["type"] == "ToolHookBlockedError"  # type: ignore[index]
+    assert "测试策略拒绝" in blocked_result.error["message"]  # type: ignore[index]
+    assert blocked_result.call_id == "toolu-1"
+    assert tool.calls == []
+    assert [context.request for context in hook.contexts] == [request]
+
+
+def test_executor_rejects_missing_or_mismatched_context_when_hooks_are_enabled() -> None:
+    tool = FakeTool(definition=_read_definition(), result={"content": "测试内容"})
+    tool_registry = ToolRegistry()
+    tool_registry.register(tool)
+    executor = ToolExecutor(tool_registry, hook_runner=HookRunner(HookRegistry()))
+    request = ToolCallRequest(name="read_file", arguments={"path": "README.md"})
+    other_request = ToolCallRequest(name="read_file", arguments={"path": "其他.md"})
+
+    missing_context = executor.execute(request)
+    mismatched_context = executor.execute(
+        request,
+        pre_tool_context=PreToolUseContext(
+            session_id="session-1",
+            run_id="run-1",
+            step_id="step-1",
+            request=other_request,
+        ),
+    )
+
+    assert missing_context.error["type"] == "ToolExecutionError"  # type: ignore[index]
+    assert "必须提供 PreToolUseContext" in missing_context.error["message"]  # type: ignore[index]
+    assert mismatched_context.error["type"] == "ToolExecutionError"  # type: ignore[index]
+    assert "必须关联当前工具调用请求" in mismatched_context.error["message"]  # type: ignore[index]
+    assert tool.calls == []
