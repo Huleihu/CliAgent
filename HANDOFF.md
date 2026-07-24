@@ -4,6 +4,7 @@
 
 - 已完成 Phase 1 的第二十个教学式迭代：状态机、JSON 文件状态仓储、最小内部事件协议、Runtime 输入编排、内容块模型协议、有界 Agent Loop、统一 logging、受控工具框架、DeepSeek 真实模型适配、多轮工具调用闭环、最小交互式启动入口、真实只读文件工具、跨 Run 会话历史与统一参数校验。
 - 已完成 S4 的第 1 个教学式小步：定义了独立 Hook 包的事件、不可变上下文和结构化控制结果契约；尚未注册或触发 Hook，因此现有 Runtime 与工具执行行为保持不变。
+- 已完成 S4 的第 2 个教学式小步：实现 Hook 注册与触发基础设施；注册顺序稳定，首个阻止结果会终止该事件的后续回调，但尚未接入 Runtime 或工具执行。
 - 使用 Conda 环境 `local-dev-agent`（Python 3.13）。
 
 ## 已完成
@@ -90,15 +91,17 @@
 - 新增 `local_dev_agent.hooks` 契约包：`HookEvent` 覆盖用户输入、工具执行前后与停止四个生命周期事件；四类事件使用各自的冻结上下文，复用既有 `ToolCallRequest`、`ToolCallResult` 和 `ModelResponse`，不复制或放宽现有协议。
 - 新增 `HookResult` 与 `HookDecision`：当前明确区分 `continue` 和带中文原因的 `block`，为下一步注册表和未来 S3 的 `PreToolUse` 权限适配保留稳定边界。
 - 添加 Hook 契约单元测试，覆盖事件值、上下文关联与不可变性、非法关联标识、协议对象类型和控制结果组合。
+- 新增 `Hook` 端口、`HookRegistry` 与 `HookRunner`：注册表按生命周期事件隔离 Hook，保持注册顺序并拒绝同事件重名；运行器按顺序触发，首个 `block` 会阻止后续回调，回调异常和非法返回值收束为中文 `HookExecutionError`。
+- Hook 上下文通过类级事件标识自描述所属生命周期，运行器拒绝事件与上下文不匹配的调用；添加注册表、触发顺序、阻止短路、上下文错配和回调失败单元测试。
 
 ## 验证
 
 - `anthropic`、`python-dotenv`、`pytest` 可在 Conda 环境中导入。
 - `ruff` 可运行。
 - 已人工核对 `TDD.md` 与 `AGENT_REQUIREMENTS_CHECKLIST.txt` 的 S01–S30 覆盖关系；本次仅修改文档，未运行代码测试。
-- `python -m pytest`：112 passed（覆盖状态机、JSON 文件状态仓储、会话 Transcript、最小内部事件协议、Runtime 输入编排、内容块模型协议、有界 Agent Loop、统一 logging、受控工具框架、DeepSeek Provider、多轮工具调用闭环、最小交互式启动入口、只读文件工具与 Hook 契约）。
+- `python -m pytest`：121 passed（覆盖状态机、JSON 文件状态仓储、会话 Transcript、最小内部事件协议、Runtime 输入编排、内容块模型协议、有界 Agent Loop、统一 logging、受控工具框架、DeepSeek Provider、多轮工具调用闭环、最小交互式启动入口、只读文件工具与 Hook 契约、注册和触发）。
 - `python -m ruff check src tests`：通过。
 
 ## 下一步
 
-- 进入 S4 的第 2 个教学式小步：实现 `Hook` 端口、按事件注册的 `HookRegistry` 与按注册顺序触发的 `HookRunner`；本步仍不接入 Runtime 或工具执行。随后再依次接入 `PreToolUse`、`PostToolUse`、用户输入与停止事件，并在 S3 中将权限策略接入 `PreToolUse`。
+- 进入 S4 的第 3 个教学式小步：将 `PreToolUse` 接入 `ToolExecutor`。先完成工具查找与参数校验，再触发执行前 Hook；Hook 阻止时不调用工具实现，而是产生可回填的结构化失败结果。随后再接入 `PostToolUse`、用户输入和停止事件，并在 S3 中将权限策略接入 `PreToolUse`。

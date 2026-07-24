@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import StrEnum
+from typing import ClassVar
 
 from local_dev_agent.models.ports import ModelResponse
 from local_dev_agent.tools.schema import ToolCallRequest, ToolCallResult
@@ -43,6 +44,8 @@ class UserPromptSubmitContext:
     step_id: str
     prompt: str
 
+    event: ClassVar[HookEvent] = HookEvent.USER_PROMPT_SUBMIT
+
     def __post_init__(self) -> None:
         """确保 Hook 能将输入事件关联到确定的运行与步骤。"""
 
@@ -60,6 +63,8 @@ class PreToolUseContext:
     run_id: str
     step_id: str
     request: ToolCallRequest
+
+    event: ClassVar[HookEvent] = HookEvent.PRE_TOOL_USE
 
     def __post_init__(self) -> None:
         """确保执行前 Hook 只接收有效的工具调用契约。"""
@@ -81,6 +86,8 @@ class PostToolUseContext:
     request: ToolCallRequest
     result: ToolCallResult
 
+    event: ClassVar[HookEvent] = HookEvent.POST_TOOL_USE
+
     def __post_init__(self) -> None:
         """确保执行后 Hook 可同时读取调用快照和结构化结果。"""
 
@@ -101,6 +108,8 @@ class StopContext:
     run_id: str
     step_id: str
     response: ModelResponse
+
+    event: ClassVar[HookEvent] = HookEvent.STOP
 
     def __post_init__(self) -> None:
         """确保停止 Hook 能读取可回溯的最终模型响应。"""
