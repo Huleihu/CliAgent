@@ -48,6 +48,7 @@ def test_create_tool_registry_registers_the_read_only_file_listing_tool(tmp_path
         "edit_file",
         "list_files",
         "read_file",
+        "todo_write",
         "write_file",
     ]
 

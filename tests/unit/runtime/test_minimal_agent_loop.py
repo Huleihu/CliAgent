@@ -38,8 +38,10 @@ from local_dev_agent.tools.builtin import (
     EditFileTool,
     ListFilesTool,
     ReadFileTool,
+    TodoWriteTool,
     WriteFileTool,
 )
+from local_dev_agent.todos import JsonFileTodoRepository, TodoStatus
 
 
 class ScriptedModel:
@@ -502,6 +504,75 @@ def test_minimal_agent_loop_returns_the_real_edit_file_result(tmp_path) -> None:
     assert tool_result.content == {"path": "status.txt", "replacements": 1}
     assert target_file.read_text(encoding="utf-8") == "进行中\n待办"
     assert result.response.text == "已修改状态文件。"
+
+
+def test_minimal_agent_loop_returns_the_real_todo_write_result(tmp_path) -> None:
+    timestamp = datetime(2026, 7, 25, 10, 0, tzinfo=timezone.utc)
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    repository = JsonFileStateRepository(tmp_path / "state")
+    session = SessionState.create(
+        session_id="session-1",
+        tenant_id="tenant-1",
+        user_id="user-1",
+        project_id=str(workspace),
+        created_at=timestamp,
+    )
+    repository.save_session(session)
+    start = UserInputRuntimeService(repository).handle(
+        UserInputEvent.create(
+            session_id=session.session_id,
+            content="列出并更新实现步骤。",
+            occurred_at=timestamp,
+        )
+    )
+    registry = ToolRegistry()
+    todo_repository = JsonFileTodoRepository(workspace / "var" / "state" / "todos")
+    registry.register(TodoWriteTool(todo_repository))
+    model = ScriptedModel(
+        (
+            ModelResponse(
+                stop_reason=StopReason.TOOL_USE,
+                content=(
+                    ToolUseBlock(
+                        tool_use_id="toolu-1",
+                        name="todo_write",
+                        input={
+                            "todos": [
+                                {
+                                    "content": "实现 JSON 仓储",
+                                    "status": "completed",
+                                },
+                                {
+                                    "content": "注册 todo_write 工具",
+                                    "status": "in_progress",
+                                    "active_form": "正在注册 todo_write 工具",
+                                },
+                            ],
+                        },
+                    ),
+                ),
+            ),
+            ModelResponse.text_completion("待办清单已更新。"),
+        )
+    )
+
+    result = MinimalAgentLoop(repository, model, registry).execute(
+        start,
+        occurred_at=timestamp,
+    )
+
+    tool_result = model.requests[1].conversation[2].content[0]
+    assert isinstance(tool_result, ToolResultBlock)
+    assert tool_result.content == {
+        "todo_list_id": "default",
+        "total": 2,
+        "pending": 0,
+        "in_progress": 1,
+        "completed": 1,
+    }
+    assert todo_repository.load("default").todos[0].status is TodoStatus.COMPLETED
+    assert result.response.text == "待办清单已更新。"
 
 
 def test_minimal_agent_loop_reuses_persisted_session_history_across_runs(tmp_path) -> None:

@@ -17,11 +17,13 @@ from local_dev_agent.runtime.loop import AgentLoopResult
 from local_dev_agent.storage.json_state_repository import JsonFileStateRepository
 from local_dev_agent.storage.json_conversation_repository import JsonFileConversationRepository
 from local_dev_agent.storage.ports import StateRepository
+from local_dev_agent.todos import JsonFileTodoRepository
 from local_dev_agent.tools import ToolRegistry
 from local_dev_agent.tools.builtin import (
     EditFileTool,
     ListFilesTool,
     ReadFileTool,
+    TodoWriteTool,
     WriteFileTool,
 )
 
@@ -48,6 +50,9 @@ def create_tool_registry(workspace: Path) -> ToolRegistry:
     registry.register(ReadFileTool(workspace))
     registry.register(WriteFileTool(workspace))
     registry.register(EditFileTool(workspace))
+    registry.register(
+        TodoWriteTool(JsonFileTodoRepository(workspace / "var" / "state" / "todos"))
+    )
     return registry
 
 
