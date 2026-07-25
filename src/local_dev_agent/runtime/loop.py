@@ -36,11 +36,13 @@ from local_dev_agent.storage.ports import StateRepository
 from local_dev_agent.storage.conversation_ports import ConversationRepository
 from local_dev_agent.todos import TodoReminderPolicy
 from local_dev_agent.tools import (
+    DELEGATION_TOOL_TAG,
     ToolCallRequest,
     ToolExecutionContext,
     ToolExecutor,
     ToolRegistry,
 )
+from local_dev_agent.tools.errors import ToolNotFoundError
 from local_dev_agent.tools.schema import ToolCallResult
 
 from .errors import AgentLoopExhaustedError, UnsupportedModelResponseError
@@ -387,7 +389,7 @@ class MinimalAgentLoop:
         for block in tool_blocks:
             tool_step = self._create_and_start_step(
                 run_id=run_id,
-                step_type=StepType.TOOL,
+                step_type=self._tool_step_type(block.name),
                 timestamp=timestamp,
             )
             logger.info(
@@ -411,6 +413,17 @@ class MinimalAgentLoop:
             tool_steps.append(self._finish_tool_step(tool_step, result, timestamp))
             tool_results.append(self._to_tool_result_block(block, result))
         return tuple(tool_results), tuple(tool_steps)
+
+    def _tool_step_type(self, tool_name: str) -> StepType:
+        """按本地工具标签区分普通工具与委派步骤，未知工具仍按普通调用记录。"""
+
+        try:
+            tool = self._registry.get(tool_name)
+        except ToolNotFoundError:
+            return StepType.TOOL
+        if DELEGATION_TOOL_TAG in tool.definition.tags:
+            return StepType.DELEGATE
+        return StepType.TOOL
 
     def _finish_tool_step(
         self,

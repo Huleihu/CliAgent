@@ -10,6 +10,10 @@ from typing import Mapping
 from .errors import ToolValidationError
 
 
+DELEGATION_TOOL_TAG = "delegation"
+"""标记会创建独立子运行的本地工具标签。"""
+
+
 def _require_text(field_name: str, value: str) -> None:
     if not isinstance(value, str) or not value.strip():
         raise ToolValidationError(f"字段“{field_name}”必须是非空字符串。")
