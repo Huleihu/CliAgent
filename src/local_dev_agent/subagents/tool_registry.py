@@ -23,3 +23,9 @@ class SubagentToolRegistryFactory:
         for tool_name in self._policy.allowed_tool_names:
             registry.register(self._parent_registry.get(tool_name))
         return registry
+
+    @property
+    def policy(self) -> SubagentPolicy:
+        """返回构造子目录时使用的不可变策略快照。"""
+
+        return self._policy
