@@ -3,7 +3,7 @@
 from abc import ABC, abstractmethod
 from typing import Mapping
 
-from .schema import ToolDefinition
+from .schema import ToolDefinition, ToolExecutionContext
 
 
 class Tool(ABC):
@@ -15,5 +15,10 @@ class Tool(ABC):
         """返回可安全暴露给模型和运行时的工具定义。"""
 
     @abstractmethod
-    def run(self, arguments: Mapping[str, object]) -> Mapping[str, object]:
-        """执行工具并返回仅含 JSON 原生值的对象结果。"""
+    def run(
+        self,
+        arguments: Mapping[str, object],
+        *,
+        context: ToolExecutionContext | None = None,
+    ) -> Mapping[str, object]:
+        """在可选关联上下文中执行工具，并返回仅含 JSON 原生值的对象结果。"""

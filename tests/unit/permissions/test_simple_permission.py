@@ -7,7 +7,6 @@ from local_dev_agent.hooks import (
     HookEvent,
     HookRegistry,
     HookRunner,
-    PreToolUseContext,
 )
 from local_dev_agent.permissions import (
     PermissionContext,
@@ -21,6 +20,7 @@ from local_dev_agent.tools import (
     FakeTool,
     ToolCallRequest,
     ToolDefinition,
+    ToolExecutionContext,
     ToolExecutor,
     ToolRegistry,
 )
@@ -171,11 +171,11 @@ def test_permission_hook_blocks_tool_execution_when_user_denies(
         hook_runner=HookRunner(hook_registry),
     ).execute(
         request,
-        pre_tool_context=PreToolUseContext(
+        context=ToolExecutionContext(
             session_id="session-1",
             run_id="run-1",
             step_id="step-1",
-            request=request,
+            call_id=request.call_id,
         ),
     )
 

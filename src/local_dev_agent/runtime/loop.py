@@ -18,7 +18,6 @@ from local_dev_agent.hooks import (
     HookEvent,
     HookExecutionError,
     HookRunner,
-    PreToolUseContext,
     StopContext,
     UserPromptSubmitContext,
 )
@@ -36,7 +35,12 @@ from local_dev_agent.models import (
 from local_dev_agent.storage.ports import StateRepository
 from local_dev_agent.storage.conversation_ports import ConversationRepository
 from local_dev_agent.todos import TodoReminderPolicy
-from local_dev_agent.tools import ToolCallRequest, ToolExecutor, ToolRegistry
+from local_dev_agent.tools import (
+    ToolCallRequest,
+    ToolExecutionContext,
+    ToolExecutor,
+    ToolRegistry,
+)
 from local_dev_agent.tools.schema import ToolCallResult
 
 from .errors import AgentLoopExhaustedError, UnsupportedModelResponseError
@@ -397,11 +401,11 @@ class MinimalAgentLoop:
             )
             result = self._executor.execute(
                 request,
-                pre_tool_context=PreToolUseContext(
+                context=ToolExecutionContext(
                     session_id=session_id,
                     run_id=run_id,
                     step_id=tool_step.step_id,
-                    request=request,
+                    call_id=request.call_id,
                 ),
             )
             tool_steps.append(self._finish_tool_step(tool_step, result, timestamp))

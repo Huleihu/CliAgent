@@ -83,6 +83,25 @@ class ToolCallRequest:
 
 
 @dataclass(frozen=True, slots=True)
+class ToolExecutionContext:
+    """一次工具执行所属的运行、步骤和模型调用关联。"""
+
+    session_id: str
+    run_id: str
+    step_id: str
+    call_id: str | None = None
+
+    def __post_init__(self) -> None:
+        """确保工具能够在不依赖全局状态的前提下追溯调用来源。"""
+
+        _require_text("session_id", self.session_id)
+        _require_text("run_id", self.run_id)
+        _require_text("step_id", self.step_id)
+        if self.call_id is not None:
+            _require_text("call_id", self.call_id)
+
+
+@dataclass(frozen=True, slots=True)
 class ToolCallResult:
     """工具执行成功或失败后的统一、可回填结果。"""
 

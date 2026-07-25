@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 
 from .ports import Tool
-from .schema import ToolDefinition
+from .schema import ToolDefinition, ToolExecutionContext
 
 
 class FunctionTool(Tool):
@@ -28,7 +28,12 @@ class FunctionTool(Tool):
 
         return self._definition
 
-    def run(self, arguments: Mapping[str, object]) -> Mapping[str, object]:
-        """调用业务函数，返回值由执行器统一校验。"""
+    def run(
+        self,
+        arguments: Mapping[str, object],
+        *,
+        context: ToolExecutionContext | None = None,
+    ) -> Mapping[str, object]:
+        """调用无状态业务函数；关联上下文留给需要它的专用工具。"""
 
         return self._function(arguments)

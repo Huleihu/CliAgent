@@ -16,6 +16,7 @@ from local_dev_agent.tools import (
     ToolCallRequest,
     ToolDefinition,
     ToolDiscovery,
+    ToolExecutionContext,
     ToolExecutor,
     ToolRegistry,
 )
@@ -56,6 +57,34 @@ def test_executor_returns_a_success_result_and_preserves_call_id() -> None:
     assert result.data == {"content": "测试内容"}
     assert result.call_id == "toolu-1"
     assert tool.calls == [{"path": "README.md"}]
+    assert tool.contexts == [None]
+
+
+def test_execution_context_is_immutable_and_validates_association_fields() -> None:
+    context = ToolExecutionContext(
+        session_id="session-1",
+        run_id="run-1",
+        step_id="step-1",
+        call_id="toolu-1",
+    )
+
+    assert context.call_id == "toolu-1"
+    with pytest.raises(FrozenInstanceError):
+        context.step_id = "其他步骤"  # type: ignore[misc]
+
+    for field_name in ("session_id", "run_id", "step_id", "call_id"):
+        values = {
+            "session_id": "session-1",
+            "run_id": "run-1",
+            "step_id": "step-1",
+            "call_id": "toolu-1",
+        }
+        values[field_name] = " "
+        with pytest.raises(
+            ToolValidationError,
+            match=f"字段“{field_name}”必须是非空字符串",
+        ):
+            ToolExecutionContext(**values)
 
 
 def test_executor_converts_expected_failures_to_structured_results() -> None:
@@ -276,11 +305,11 @@ def test_executor_runs_pre_tool_hook_after_validation_and_skips_blocked_tool() -
     invalid_result = executor.execute(ToolCallRequest(name="read_file", arguments={}))
     blocked_result = executor.execute(
         request,
-        pre_tool_context=PreToolUseContext(
+        context=ToolExecutionContext(
             session_id="session-1",
             run_id="run-1",
             step_id="step-1",
-            request=request,
+            call_id="toolu-1",
         ),
     )
 
@@ -298,22 +327,25 @@ def test_executor_rejects_missing_or_mismatched_context_when_hooks_are_enabled()
     tool_registry = ToolRegistry()
     tool_registry.register(tool)
     executor = ToolExecutor(tool_registry, hook_runner=HookRunner(HookRegistry()))
-    request = ToolCallRequest(name="read_file", arguments={"path": "README.md"})
-    other_request = ToolCallRequest(name="read_file", arguments={"path": "其他.md"})
+    request = ToolCallRequest(
+        name="read_file",
+        arguments={"path": "README.md"},
+        call_id="toolu-1",
+    )
 
     missing_context = executor.execute(request)
     mismatched_context = executor.execute(
         request,
-        pre_tool_context=PreToolUseContext(
+        context=ToolExecutionContext(
             session_id="session-1",
             run_id="run-1",
             step_id="step-1",
-            request=other_request,
+            call_id="toolu-other",
         ),
     )
 
     assert missing_context.error["type"] == "ToolExecutionError"  # type: ignore[index]
-    assert "必须提供 PreToolUseContext" in missing_context.error["message"]  # type: ignore[index]
+    assert "必须提供 ToolExecutionContext" in missing_context.error["message"]  # type: ignore[index]
     assert mismatched_context.error["type"] == "ToolExecutionError"  # type: ignore[index]
     assert "必须关联当前工具调用请求" in mismatched_context.error["message"]  # type: ignore[index]
     assert tool.calls == []
@@ -342,12 +374,12 @@ class FailingPostToolHook:
         raise RuntimeError("审计服务不可用")
 
 
-def _pre_tool_context(request: ToolCallRequest) -> PreToolUseContext:
-    return PreToolUseContext(
+def _execution_context(request: ToolCallRequest) -> ToolExecutionContext:
+    return ToolExecutionContext(
         session_id="session-1",
         run_id="run-1",
         step_id="step-1",
-        request=request,
+        call_id=request.call_id,
     )
 
 
@@ -361,11 +393,14 @@ def test_executor_triggers_post_tool_hook_with_the_final_success_result() -> Non
     executor = ToolExecutor(tool_registry, hook_runner=HookRunner(hook_registry))
     request = ToolCallRequest(name="read_file", arguments={"path": "README.md"})
 
-    result = executor.execute(request, pre_tool_context=_pre_tool_context(request))
+    context = _execution_context(request)
+
+    result = executor.execute(request, context=context)
 
     assert result.success is True
     assert result.data == {"content": "测试内容"}
     assert tool.calls == [{"path": "README.md"}]
+    assert tool.contexts == [context]
     assert post_hook.contexts[0].request is request
     assert post_hook.contexts[0].result == result
 
@@ -391,7 +426,7 @@ def test_executor_triggers_post_hook_for_tool_failures_but_not_pre_hook_blocks()
 
     failed_result = executor.execute(
         failed_request,
-        pre_tool_context=_pre_tool_context(failed_request),
+        context=_execution_context(failed_request),
     )
 
     blocking_registry = HookRegistry()
@@ -404,7 +439,7 @@ def test_executor_triggers_post_hook_for_tool_failures_but_not_pre_hook_blocks()
     blocked_request = ToolCallRequest(name="explode", arguments={})
     blocked_result = blocked_executor.execute(
         blocked_request,
-        pre_tool_context=_pre_tool_context(blocked_request),
+        context=_execution_context(blocked_request),
     )
 
     assert failed_result.success is False
@@ -422,7 +457,7 @@ def test_executor_keeps_the_tool_result_when_a_post_hook_fails() -> None:
     executor = ToolExecutor(tool_registry, hook_runner=HookRunner(hook_registry))
     request = ToolCallRequest(name="read_file", arguments={"path": "README.md"})
 
-    result = executor.execute(request, pre_tool_context=_pre_tool_context(request))
+    result = executor.execute(request, context=_execution_context(request))
 
     assert result.success is True
     assert result.data == {"content": "测试内容"}

@@ -7,7 +7,7 @@ from pathlib import Path
 
 from ..errors import ToolExecutionError, ToolValidationError
 from ..ports import Tool
-from ..schema import ToolDefinition
+from ..schema import ToolDefinition, ToolExecutionContext
 from ..workspace import WorkspaceBoundary
 
 
@@ -48,7 +48,12 @@ class ListFilesTool(Tool):
 
         return self._definition
 
-    def run(self, arguments: Mapping[str, object]) -> Mapping[str, object]:
+    def run(
+        self,
+        arguments: Mapping[str, object],
+        *,
+        context: ToolExecutionContext | None = None,
+    ) -> Mapping[str, object]:
         """返回稳定排序的工作区相对文件路径，并报告是否被截断。"""
 
         directory = self._read_text(arguments, "directory", default=".")

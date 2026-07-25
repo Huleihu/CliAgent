@@ -7,7 +7,7 @@ from pathlib import Path
 
 from ..errors import ToolValidationError
 from ..ports import Tool
-from ..schema import ToolDefinition
+from ..schema import ToolDefinition, ToolExecutionContext
 from ..text_files import read_utf8_text
 from ..workspace import WorkspaceBoundary
 
@@ -51,7 +51,12 @@ class ReadFileTool(Tool):
 
         return self._definition
 
-    def run(self, arguments: Mapping[str, object]) -> Mapping[str, object]:
+    def run(
+        self,
+        arguments: Mapping[str, object],
+        *,
+        context: ToolExecutionContext | None = None,
+    ) -> Mapping[str, object]:
         """读取有限文本片段，避免单次工具结果占满模型上下文。"""
 
         path = self._read_path(arguments)

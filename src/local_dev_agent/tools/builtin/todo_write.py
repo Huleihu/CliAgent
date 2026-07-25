@@ -8,7 +8,7 @@ from local_dev_agent.todos import TodoItem, TodoRepository, TodoSnapshot, TodoSt
 
 from ..errors import ToolValidationError
 from ..ports import Tool
-from ..schema import ToolDefinition
+from ..schema import ToolDefinition, ToolExecutionContext
 
 
 class TodoWriteTool(Tool):
@@ -57,7 +57,12 @@ class TodoWriteTool(Tool):
 
         return self._definition
 
-    def run(self, arguments: Mapping[str, object]) -> Mapping[str, object]:
+    def run(
+        self,
+        arguments: Mapping[str, object],
+        *,
+        context: ToolExecutionContext | None = None,
+    ) -> Mapping[str, object]:
         """校验完整输入后原子替换清单，并返回紧凑进度统计。"""
 
         todos = self._read_todos(arguments)

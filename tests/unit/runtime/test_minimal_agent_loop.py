@@ -403,6 +403,12 @@ def test_minimal_agent_loop_executes_tool_and_returns_its_result_to_the_model(
     assert result.response.text == "README 已读取。"
     assert result.run.status is RunStatus.COMPLETED
     assert tool.calls == [{"path": "README.md"}]
+    execution_context = tool.contexts[0]
+    assert execution_context is not None
+    assert execution_context.session_id == session.session_id
+    assert execution_context.run_id == result.run.run_id
+    assert execution_context.step_id == result.steps[1].step_id
+    assert execution_context.call_id == "toolu-1"
     assert model.requests[0].tools == (tool.definition,)
     assert model.requests[1].conversation[2].content[0].content == {
         "content": "项目说明"

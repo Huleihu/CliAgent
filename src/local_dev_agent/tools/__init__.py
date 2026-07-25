@@ -6,7 +6,12 @@ from .fake import FakeTool
 from .function_tool import FunctionTool
 from .ports import Tool
 from .registry import ToolRegistry
-from .schema import ToolCallRequest, ToolCallResult, ToolDefinition
+from .schema import (
+    ToolCallRequest,
+    ToolCallResult,
+    ToolDefinition,
+    ToolExecutionContext,
+)
 
 __all__ = [
     "FakeTool",
@@ -16,6 +21,7 @@ __all__ = [
     "ToolCallResult",
     "ToolDefinition",
     "ToolDiscovery",
+    "ToolExecutionContext",
     "ToolExecutor",
     "ToolRegistry",
 ]

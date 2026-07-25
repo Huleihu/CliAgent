@@ -20,7 +20,7 @@ from .errors import (
     ToolValidationError,
 )
 from .registry import ToolRegistry
-from .schema import ToolCallRequest, ToolCallResult
+from .schema import ToolCallRequest, ToolCallResult, ToolExecutionContext
 
 logger = logging.getLogger(__name__)
 
@@ -41,9 +41,9 @@ class ToolExecutor:
         self,
         request: ToolCallRequest,
         *,
-        pre_tool_context: PreToolUseContext | None = None,
+        context: ToolExecutionContext | None = None,
     ) -> ToolCallResult:
-        """执行一次调用；启用 Hook 时必须在工具运行前提供关联上下文。"""
+        """执行一次调用；上下文存在时统一传给工具并派生 Hook 关联。"""
 
         started_at = perf_counter()
         try:
@@ -53,7 +53,8 @@ class ToolExecutor:
                 parameters=tool.definition.parameters,
                 arguments=request.arguments,
             )
-            self._trigger_pre_tool_use(request, pre_tool_context)
+            self._validate_execution_context(request, context)
+            self._trigger_pre_tool_use(request, context)
         except (
             HookExecutionError,
             ToolNotFoundError,
@@ -63,20 +64,24 @@ class ToolExecutor:
         ) as error:
             return self._failed_result(request, error, started_at)
 
-        result = self._run_tool(request, tool, started_at)
-        self._trigger_post_tool_use(pre_tool_context, result)
+        result = self._run_tool(request, tool, context, started_at)
+        self._trigger_post_tool_use(request, context, result)
         return result
 
     def _run_tool(
         self,
         request: ToolCallRequest,
         tool: object,
+        context: ToolExecutionContext | None,
         started_at: float,
     ) -> ToolCallResult:
         """运行已通过执行前检查的工具，并将运行期失败收束为结果。"""
 
         try:
-            data = tool.run(request.arguments)  # type: ignore[attr-defined]
+            data = tool.run(  # type: ignore[attr-defined]
+                request.arguments,
+                context=context,
+            )
             return ToolCallResult.succeeded(
                 name=request.name,
                 data=data,
@@ -92,37 +97,54 @@ class ToolExecutor:
                 started_at,
             )
 
+    def _validate_execution_context(
+        self,
+        request: ToolCallRequest,
+        context: ToolExecutionContext | None,
+    ) -> None:
+        """拒绝缺失的 Hook 关联和与当前请求不一致的调用标识。"""
+
+        if self._hook_runner is not None and context is None:
+            raise ToolExecutionError("启用 HookRunner 后必须提供 ToolExecutionContext。")
+        if context is not None and context.call_id != request.call_id:
+            raise ToolExecutionError("ToolExecutionContext 必须关联当前工具调用请求。")
+
     def _trigger_pre_tool_use(
         self,
         request: ToolCallRequest,
-        pre_tool_context: PreToolUseContext | None,
+        context: ToolExecutionContext | None,
     ) -> None:
-        """在已校验调用进入工具实现前触发 Hook，拒绝缺失或错配上下文。"""
+        """从统一执行上下文派生执行前 Hook 关联。"""
 
         if self._hook_runner is None:
             return
-        if pre_tool_context is None:
-            raise ToolExecutionError("启用 HookRunner 后必须提供 PreToolUseContext。")
-        if pre_tool_context.request != request:
-            raise ToolExecutionError("PreToolUseContext 必须关联当前工具调用请求。")
+        if context is None:
+            raise AssertionError("执行上下文已在触发 Hook 前完成校验。")
+        pre_tool_context = PreToolUseContext(
+            session_id=context.session_id,
+            run_id=context.run_id,
+            step_id=context.step_id,
+            request=request,
+        )
         result = self._hook_runner.trigger(HookEvent.PRE_TOOL_USE, pre_tool_context)
         if result.decision is HookDecision.BLOCK:
             raise ToolHookBlockedError(result.message or "执行前 Hook 未提供阻止原因。")
 
     def _trigger_post_tool_use(
         self,
-        pre_tool_context: PreToolUseContext | None,
+        request: ToolCallRequest,
+        context: ToolExecutionContext | None,
         result: ToolCallResult,
     ) -> None:
         """在工具结果确定后触发观察型 Hook，不允许其改写既有结果。"""
 
-        if self._hook_runner is None or pre_tool_context is None:
+        if self._hook_runner is None or context is None:
             return
         post_tool_context = PostToolUseContext(
-            session_id=pre_tool_context.session_id,
-            run_id=pre_tool_context.run_id,
-            step_id=pre_tool_context.step_id,
-            request=pre_tool_context.request,
+            session_id=context.session_id,
+            run_id=context.run_id,
+            step_id=context.step_id,
+            request=request,
             result=result,
         )
         try:

@@ -3,7 +3,7 @@
 from collections.abc import Mapping
 
 from .ports import Tool
-from .schema import ToolDefinition
+from .schema import ToolDefinition, ToolExecutionContext
 
 
 class FakeTool(Tool):
@@ -13,6 +13,7 @@ class FakeTool(Tool):
         self._definition = definition
         self._result = dict(result)
         self.calls: list[Mapping[str, object]] = []
+        self.contexts: list[ToolExecutionContext | None] = []
 
     @property
     def definition(self) -> ToolDefinition:
@@ -20,8 +21,14 @@ class FakeTool(Tool):
 
         return self._definition
 
-    def run(self, arguments: Mapping[str, object]) -> Mapping[str, object]:
-        """记录参数副本后返回预设数据。"""
+    def run(
+        self,
+        arguments: Mapping[str, object],
+        *,
+        context: ToolExecutionContext | None = None,
+    ) -> Mapping[str, object]:
+        """记录参数与执行上下文后返回预设数据。"""
 
         self.calls.append(dict(arguments))
+        self.contexts.append(context)
         return dict(self._result)

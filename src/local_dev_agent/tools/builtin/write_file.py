@@ -7,7 +7,7 @@ from pathlib import Path
 
 from ..errors import ToolExecutionError, ToolValidationError
 from ..ports import Tool
-from ..schema import ToolDefinition
+from ..schema import ToolDefinition, ToolExecutionContext
 from ..workspace import WorkspaceBoundary
 
 
@@ -42,7 +42,12 @@ class WriteFileTool(Tool):
 
         return self._definition
 
-    def run(self, arguments: Mapping[str, object]) -> Mapping[str, object]:
+    def run(
+        self,
+        arguments: Mapping[str, object],
+        *,
+        context: ToolExecutionContext | None = None,
+    ) -> Mapping[str, object]:
         """创建父目录后写入文本，并返回规范化路径与 UTF-8 字节数。"""
 
         path = self._read_path(arguments)
