@@ -21,6 +21,7 @@
 - 已完成当前范围的 `learnClaude/s05_todo_write` 闭环：平铺 Todo 领域契约、JSON 持久化、`todo_write` 工具、CLI 规划系统提示和运行时临时 reminder 均已独立实现并完成测试；当前刻意不包含 S12 的依赖图、owner、任务认领或并发锁。
 - 已完成 `learnClaude/s06_subagent` 的第 1 个教学式小步：新增独立 `local_dev_agent.subagents` 契约包，以不可变 `SubagentTask`、`SubagentOutcome` 与 `SubagentResult` 表示可追溯委派任务及结构化结果，并以 `SubagentRunner` 隔离后续执行实现；当前尚未传递工具执行上下文、启动独立子循环或注册 `task` 工具。
 - 已完成 `learnClaude/s06_subagent` 的第 2 个教学式小步：新增不可变 `ToolExecutionContext`，由 Agent Loop 显式提供 Session、Run、工具 Step 与调用标识；`ToolExecutor` 使用同一上下文派生执行前后 Hook 关联并传入工具实现，现有工具可忽略该上下文且行为保持不变。当前仍未定义子 Agent 能力策略、启动独立子循环或注册 `task`。
+- 已完成 `learnClaude/s06_subagent` 的第 3 个教学式小步：新增不可变 `SubagentPolicy` 与 `SubagentToolRegistryFactory`；策略在应用装配层固定最大模型轮次、子系统提示和工具白名单，并硬拒绝 `task`、`todo_write`，工厂从父工具目录创建新的受限子目录。当前仍未启动独立子循环或注册 `task`。
 - 使用 Conda 环境 `local-dev-agent`（Python 3.13）。
 
 ## 已完成
@@ -132,16 +133,18 @@
 - 新增通用 `ToolExecutionContext` 并扩展 `Tool.run()` 端口：上下文携带 Session、Run、Step 和可选调用标识，所有内置工具、`FunctionTool` 与 `FakeTool` 均完成向后兼容适配；无 Hook 的低层直接调用仍可省略上下文。
 - `ToolExecutor` 现统一校验上下文与 `ToolCallRequest.call_id` 的关联，再从该上下文构造 `PreToolUseContext`、`PostToolUseContext` 并将同一对象交给工具；启用 Hook 时缺失上下文、或调用标识不匹配，均在进入工具实现前收束为结构化失败。Agent Loop 已负责构造真实关联，参数校验仍先于 Hook。
 - 补充工具执行上下文单元测试和 Agent Loop 关联断言，覆盖不可变性、空字段、缺失或错配上下文、直接调用兼容、工具与 Hook 共享关联，以及真实工具 Step 标识传递。
+- 新增 S6 子 Agent 策略和受限工具目录工厂：默认只允许 `list_files`、`read_file`、`write_file`、`edit_file`，并将最大模型轮次、独立系统提示和白名单固定在本地装配配置；`task` 与 `todo_write` 在策略校验阶段被拒绝，防止递归委派和修改父 Agent 默认待办。
+- 工厂每次按白名单从父 `ToolRegistry` 创建新的子 `ToolRegistry`，共享受工作区边界约束的工具实例而不共享消息上下文；补充 14 个单元测试，覆盖预算、白名单快照、禁止能力、依赖校验、缺失工具和父子目录隔离。
 
 ## 验证
 
 - `anthropic`、`python-dotenv`、`pytest` 可在 Conda 环境中导入。
 - `ruff` 可运行。
 - 已人工核对 `TDD.md` 与 `AGENT_REQUIREMENTS_CHECKLIST.txt` 的 S01–S30 覆盖关系；本次仅修改文档，未运行代码测试。
-- `python -m pytest`：228 passed（覆盖状态机、JSON 文件状态仓储、会话 Transcript、最小内部事件协议、Runtime 输入编排、内容块模型协议、有界 Agent Loop、统一 logging、受控工具框架、DeepSeek Provider、多轮工具调用闭环、最小交互式启动入口、读写编辑文件工具、Hook 核心闭环、S3 简单权限策略、S5 待办领域契约、JSON Todo 仓储、TodoWrite 工具闭环、Todo 规划系统提示与临时 reminder，以及 S6 子 Agent 委派契约和通用工具执行上下文）。
+- `python -m pytest`：242 passed（覆盖状态机、JSON 文件状态仓储、会话 Transcript、最小内部事件协议、Runtime 输入编排、内容块模型协议、有界 Agent Loop、统一 logging、受控工具框架、DeepSeek Provider、多轮工具调用闭环、最小交互式启动入口、读写编辑文件工具、Hook 核心闭环、S3 简单权限策略、S5 待办领域契约、JSON Todo 仓储、TodoWrite 工具闭环、Todo 规划系统提示与临时 reminder，以及 S6 子 Agent 委派契约、工具执行上下文、能力策略和受限工具目录）。
 - 本次最终全量测试首次在受限沙箱内清理 `.pytest-tmp` 时遇到 Windows 权限错误；使用已批准的相同 `python -m pytest` 命令在沙箱外重跑后 228 项全部通过，未出现代码断言失败。
 - `python -m ruff check src tests`：通过。
 
 ## 下一步
 
-- 由用户检查 S6 工具执行上下文小步；确认后进入第 3 小步，定义不可由模型扩权的 `SubagentPolicy` 与受限子工具目录工厂，集中约束最大模型轮次和允许的工具名称。该步尚不启动子循环或注册 `task`。
+- 由用户检查 S6 子 Agent 策略与受限工具目录小步；确认后进入第 4 小步，实现同步 `SubagentRunner`：为每项委派创建独立 Session、Run 与 Transcript，使用本步的策略和子工具目录执行既有 `MinimalAgentLoop`，并仅返回结构化 `SubagentResult`。该步仍不注册父侧 `task` 工具。
