@@ -17,6 +17,8 @@
 - 已完成 `learnClaude/s05_todo_write` 的第 2 个教学式小步：新增 `TodoRepository` 与 `JsonFileTodoRepository`，以版本化 JSON 在指定根目录按清单标识保存完整快照；读取缺失文件返回空清单，写入使用同目录临时文件与原子替换，损坏文件、未知版本和标识不匹配均以中文错误拒绝；尚未接入 `todo_write` 工具或 Agent Loop。
 - 已完成 `learnClaude/s05_todo_write` 的第 3 个教学式小步：新增并在 CLI 默认注册 `todo_write`；工具将完整 `todos` 参数转换为领域快照后整体替换 `sandbox/var/state/todos/default.json`，返回紧凑状态统计并复用既有参数校验、Hook、权限和 Agent Loop 结果回填链路；尚未增加模型规划提示或 reminder。
 - 已完成 `learnClaude/s05_todo_write` 的第 4 个教学式小步：`ModelRequest`、DeepSeek Provider 与 `MinimalAgentLoop` 新增向后兼容的可选系统提示；CLI 仅通过该字段注入多步骤任务的 Todo 规划说明，提示不会伪装为用户消息或写入 Conversation Transcript，未配置时既有 Provider 请求保持不变；尚未增加 reminder。
+- 已完成 `learnClaude/s05_todo_write` 的第 5 个教学式小步：新增独立 `TodoReminderPolicy`；连续 3 个模型工具轮次未成功更新 `todo_write` 时，下一次 `ModelRequest` 临时追加提醒，成功更新会重置计数，提醒注入后也会重置以避免逐轮重复；提醒不修改 Todo JSON、不伪装为用户消息且不写入 Conversation Transcript。
+- 已完成当前范围的 `learnClaude/s05_todo_write` 闭环：平铺 Todo 领域契约、JSON 持久化、`todo_write` 工具、CLI 规划系统提示和运行时临时 reminder 均已独立实现并完成测试；当前刻意不包含 S12 的依赖图、owner、任务认领或并发锁。
 - 使用 Conda 环境 `local-dev-agent`（Python 3.13）。
 
 ## 已完成
@@ -129,9 +131,9 @@
 - `anthropic`、`python-dotenv`、`pytest` 可在 Conda 环境中导入。
 - `ruff` 可运行。
 - 已人工核对 `TDD.md` 与 `AGENT_REQUIREMENTS_CHECKLIST.txt` 的 S01–S30 覆盖关系；本次仅修改文档，未运行代码测试。
-- `python -m pytest`：200 passed（覆盖状态机、JSON 文件状态仓储、会话 Transcript、最小内部事件协议、Runtime 输入编排、内容块模型协议、有界 Agent Loop、统一 logging、受控工具框架、DeepSeek Provider、多轮工具调用闭环、最小交互式启动入口、读写编辑文件工具、Hook 核心闭环、S3 简单权限策略、S5 待办领域契约、JSON Todo 仓储、TodoWrite 工具闭环与 Todo 规划系统提示）。
+- `python -m pytest`：204 passed（覆盖状态机、JSON 文件状态仓储、会话 Transcript、最小内部事件协议、Runtime 输入编排、内容块模型协议、有界 Agent Loop、统一 logging、受控工具框架、DeepSeek Provider、多轮工具调用闭环、最小交互式启动入口、读写编辑文件工具、Hook 核心闭环、S3 简单权限策略、S5 待办领域契约、JSON Todo 仓储、TodoWrite 工具闭环、Todo 规划系统提示与临时 reminder）。
 - `python -m ruff check src tests`：通过。
 
 ## 下一步
 
-- 由用户检查 S5 TodoWrite 的规划提示小步；下一步新增独立 `TodoReminderPolicy`，在连续若干模型工具轮次未更新 Todo 时向下一次 `ModelRequest` 注入临时提醒；提醒不得写入 Conversation Transcript、不得伪装为用户消息，也不得修改 Todo 状态。内置工具自动发现作为独立后续框架演进项处理。
+- 由用户检查 S5 TodoWrite 的完整闭环；若按 learnClaude 路线继续，下一步进入 S6 Subagent，先单独设计子 Agent 的上下文边界、委派契约与结果回收，不直接引入并发执行。内置工具自动发现仍作为独立的工具框架演进项，暂不与 S6 混合实现。

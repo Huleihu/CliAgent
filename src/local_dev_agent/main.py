@@ -17,7 +17,7 @@ from local_dev_agent.runtime.loop import AgentLoopResult
 from local_dev_agent.storage.json_state_repository import JsonFileStateRepository
 from local_dev_agent.storage.json_conversation_repository import JsonFileConversationRepository
 from local_dev_agent.storage.ports import StateRepository
-from local_dev_agent.todos import JsonFileTodoRepository
+from local_dev_agent.todos import JsonFileTodoRepository, TodoReminderPolicy
 from local_dev_agent.tools import ToolRegistry
 from local_dev_agent.tools.builtin import (
     EditFileTool,
@@ -104,6 +104,7 @@ def main() -> None:
         conversation_repository,
         hook_runner=create_permission_hook_runner(workspace),
         system_prompt=TODO_PLANNING_SYSTEM_PROMPT,
+        todo_reminder_policy=TodoReminderPolicy(),
     )
 
     print("Local Dev Agent")

@@ -35,6 +35,7 @@ from local_dev_agent.models import (
 )
 from local_dev_agent.storage.ports import StateRepository
 from local_dev_agent.storage.conversation_ports import ConversationRepository
+from local_dev_agent.todos import TodoReminderPolicy
 from local_dev_agent.tools import ToolCallRequest, ToolExecutor, ToolRegistry
 from local_dev_agent.tools.schema import ToolCallResult
 
@@ -68,6 +69,7 @@ class MinimalAgentLoop:
         max_turns: int = 10,
         hook_runner: HookRunner | None = None,
         system_prompt: str | None = None,
+        todo_reminder_policy: TodoReminderPolicy | None = None,
     ) -> None:
         if max_turns < 1:
             raise ValueError("Agent Loop 的最大模型调用轮次必须大于或等于 1。")
@@ -83,6 +85,7 @@ class MinimalAgentLoop:
         self._executor = ToolExecutor(self._registry, hook_runner=hook_runner)
         self._max_turns = max_turns
         self._system_prompt = system_prompt
+        self._todo_reminder_policy = todo_reminder_policy
 
     def execute(
         self,
@@ -146,6 +149,7 @@ class MinimalAgentLoop:
                     log_context=log_context,
                 )
                 completed_steps.extend(tool_steps)
+                self._record_todo_tool_turn(tool_blocks, tool_results)
                 tool_result_message = ModelMessage(
                     role=MessageRole.USER,
                     content=tool_results,
@@ -328,7 +332,7 @@ class MinimalAgentLoop:
                     run_id=run_id,
                     messages=conversation,
                     tools=self._registry.list_definitions(),
-                    system_prompt=self._system_prompt,
+                    system_prompt=self._request_system_prompt(),
                 )
             )
         except Exception:
@@ -336,6 +340,34 @@ class MinimalAgentLoop:
             raise
         logger.info("模型调用完成。", extra=log_context)
         return response
+
+    def _request_system_prompt(self) -> str | None:
+        """合并稳定系统提示与一次性待办提醒，不写入会话消息。"""
+
+        reminder = (
+            self._todo_reminder_policy.consume_reminder()
+            if self._todo_reminder_policy is not None
+            else None
+        )
+        prompt_parts = tuple(
+            prompt for prompt in (self._system_prompt, reminder) if prompt is not None
+        )
+        return "\n\n".join(prompt_parts) if prompt_parts else None
+
+    def _record_todo_tool_turn(
+        self,
+        tool_blocks: tuple[ToolUseBlock, ...],
+        tool_results: tuple[ToolResultBlock, ...],
+    ) -> None:
+        """仅在成功执行 todo_write 后重置提醒计数。"""
+
+        if self._todo_reminder_policy is None:
+            return
+        todo_updated = any(
+            block.name == "todo_write" and not result.is_error
+            for block, result in zip(tool_blocks, tool_results, strict=True)
+        )
+        self._todo_reminder_policy.record_tool_turn(todo_updated=todo_updated)
 
     def _execute_tools(
         self,

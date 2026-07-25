@@ -41,7 +41,12 @@ from local_dev_agent.tools.builtin import (
     TodoWriteTool,
     WriteFileTool,
 )
-from local_dev_agent.todos import JsonFileTodoRepository, TodoStatus
+from local_dev_agent.todos import (
+    JsonFileTodoRepository,
+    TODO_REMINDER_MESSAGE,
+    TodoReminderPolicy,
+    TodoStatus,
+)
 
 
 class ScriptedModel:
@@ -183,6 +188,83 @@ def test_minimal_agent_loop_passes_system_prompt_without_persisting_it(tmp_path)
     assert all(
         "多步骤任务先维护待办清单。"
         not in block.text
+        for message in conversation_repository.get_messages("session-1")
+        for block in message.content
+        if isinstance(block, TextBlock)
+    )
+
+
+def test_minimal_agent_loop_injects_a_transient_todo_reminder_after_three_tool_turns(
+    tmp_path,
+) -> None:
+    timestamp = datetime(2026, 7, 25, 11, 30, tzinfo=timezone.utc)
+    repository = JsonFileStateRepository(tmp_path / "state")
+    conversation_repository = JsonFileConversationRepository(tmp_path / "state")
+    session = SessionState.create(
+        session_id="session-1",
+        tenant_id="tenant-1",
+        user_id="user-1",
+        project_id="project-1",
+        created_at=timestamp,
+    )
+    repository.save_session(session)
+    start = UserInputRuntimeService(repository).handle(
+        UserInputEvent.create(
+            session_id=session.session_id,
+            content="检查三个模块并汇总。",
+            occurred_at=timestamp,
+        )
+    )
+    registry = ToolRegistry()
+    registry.register(
+        FakeTool(
+            definition=ToolDefinition(
+                name="read_file",
+                description="读取文本文件。",
+                parameters={"type": "object", "properties": {}},
+            ),
+            result={"content": "模块正常"},
+        )
+    )
+    model = ScriptedModel(
+        (
+            *(
+                ModelResponse(
+                    stop_reason=StopReason.TOOL_USE,
+                    content=(
+                        ToolUseBlock(
+                            tool_use_id=f"toolu-{index}",
+                            name="read_file",
+                            input={},
+                        ),
+                    ),
+                )
+                for index in range(1, 4)
+            ),
+            ModelResponse.text_completion("三个模块均已检查。"),
+        )
+    )
+
+    result = MinimalAgentLoop(
+        repository,
+        model,
+        registry,
+        conversation_repository,
+        system_prompt="基础规划提示。",
+        todo_reminder_policy=TodoReminderPolicy(max_tool_turns_without_update=3),
+    ).execute(start, occurred_at=timestamp)
+
+    assert [request.system_prompt for request in model.requests[:3]] == [
+        "基础规划提示。",
+        "基础规划提示。",
+        "基础规划提示。",
+    ]
+    assert model.requests[3].system_prompt == (
+        f"基础规划提示。\n\n{TODO_REMINDER_MESSAGE}"
+    )
+    assert result.response.text == "三个模块均已检查。"
+    assert all(
+        TODO_REMINDER_MESSAGE not in block.text
         for message in conversation_repository.get_messages("session-1")
         for block in message.content
         if isinstance(block, TextBlock)
