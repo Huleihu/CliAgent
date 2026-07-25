@@ -13,6 +13,7 @@
 - 已完成 `learnClaude/s03_permission` 的简单权限闭环：工具参数校验通过后由 `PreToolUse` 依次执行硬拒绝、风险规则和用户确认；当前保留 S3 的未命中默认允许语义，不包含权限持久化、多来源配置或审批状态机。
 - 已完成 `learnClaude/s02_tool_use` 的写入工具小步：CLI 现注册受工作区边界限制的 `write_file`，可创建父目录或覆盖工作区内普通 UTF-8 文本文件；工作区外路径仍由权限策略和文件边界共同拒绝。
 - 已完成 `learnClaude/s02_tool_use` 的编辑工具小步：CLI 现注册 `edit_file`，仅替换工作区内既有 UTF-8 文本文件中的首次精确非空匹配；允许空替换文本以删除内容。
+- 已完成 `learnClaude/s05_todo_write` 的第 1 个教学式小步：新增独立 `local_dev_agent.todos` 领域包，以不可变 `TodoStatus`、`TodoItem` 与 `TodoSnapshot` 表示平铺待办清单；快照统一使用 UTC 时间并提供状态统计，尚未实现 JSON 仓储、`todo_write` 工具、模型规划提示或 reminder。
 - 使用 Conda 环境 `local-dev-agent`（Python 3.13）。
 
 ## 已完成
@@ -125,9 +126,9 @@
 - `anthropic`、`python-dotenv`、`pytest` 可在 Conda 环境中导入。
 - `ruff` 可运行。
 - 已人工核对 `TDD.md` 与 `AGENT_REQUIREMENTS_CHECKLIST.txt` 的 S01–S30 覆盖关系；本次仅修改文档，未运行代码测试。
-- `python -m pytest`：166 passed（覆盖状态机、JSON 文件状态仓储、会话 Transcript、最小内部事件协议、Runtime 输入编排、内容块模型协议、有界 Agent Loop、统一 logging、受控工具框架、DeepSeek Provider、多轮工具调用闭环、最小交互式启动入口、读写编辑文件工具、Hook 核心闭环与 S3 简单权限策略）。
+- `python -m pytest`：174 passed（覆盖状态机、JSON 文件状态仓储、会话 Transcript、最小内部事件协议、Runtime 输入编排、内容块模型协议、有界 Agent Loop、统一 logging、受控工具框架、DeepSeek Provider、多轮工具调用闭环、最小交互式启动入口、读写编辑文件工具、Hook 核心闭环、S3 简单权限策略与 S5 待办领域契约）。
 - `python -m ruff check src tests`：通过。
 
 ## 下一步
 
-- 由用户检查 `edit_file` 小步；`learnClaude/s02_tool_use` 的 `read_file` 与 `glob` 已分别由更受控的 `ReadFileTool`、`ListFilesTool` 覆盖。若继续新增命令执行能力，应先单独设计受控 PowerShell 工具边界与审批规则，不直接移植教学版的 `bash(shell=True)`。
+- 由用户检查 S5 TodoWrite 的领域契约小步；下一步实现 `TodoRepository` 与 `JsonFileTodoRepository`，以 `sandbox/var/state/todos/default.json` 保存版本化、原子写入的平铺待办清单，暂不接入工具或 Agent Loop。
