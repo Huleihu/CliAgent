@@ -19,6 +19,7 @@
 - 已完成 `learnClaude/s05_todo_write` 的第 4 个教学式小步：`ModelRequest`、DeepSeek Provider 与 `MinimalAgentLoop` 新增向后兼容的可选系统提示；CLI 仅通过该字段注入多步骤任务的 Todo 规划说明，提示不会伪装为用户消息或写入 Conversation Transcript，未配置时既有 Provider 请求保持不变；尚未增加 reminder。
 - 已完成 `learnClaude/s05_todo_write` 的第 5 个教学式小步：新增独立 `TodoReminderPolicy`；连续 3 个模型工具轮次未成功更新 `todo_write` 时，下一次 `ModelRequest` 临时追加提醒，成功更新会重置计数，提醒注入后也会重置以避免逐轮重复；提醒不修改 Todo JSON、不伪装为用户消息且不写入 Conversation Transcript。
 - 已完成当前范围的 `learnClaude/s05_todo_write` 闭环：平铺 Todo 领域契约、JSON 持久化、`todo_write` 工具、CLI 规划系统提示和运行时临时 reminder 均已独立实现并完成测试；当前刻意不包含 S12 的依赖图、owner、任务认领或并发锁。
+- 已完成 `learnClaude/s06_subagent` 的第 1 个教学式小步：新增独立 `local_dev_agent.subagents` 契约包，以不可变 `SubagentTask`、`SubagentOutcome` 与 `SubagentResult` 表示可追溯委派任务及结构化结果，并以 `SubagentRunner` 隔离后续执行实现；当前尚未传递工具执行上下文、启动独立子循环或注册 `task` 工具。
 - 使用 Conda 环境 `local-dev-agent`（Python 3.13）。
 
 ## 已完成
@@ -125,15 +126,17 @@
 - CLI 默认注册 `write_file`；添加工具创建、父目录、覆盖写入、边界拒绝、参数校验和 CLI 注册测试，并添加真实 Agent Loop 写入与结构化结果回填闭环测试。
 - 提取 `text_files.read_utf8_text()` 供读取和编辑工具共享，统一拒绝二进制或无效 UTF-8 内容；`WriteFileTool` 与 `EditFileTool` 使用显式 UTF-8 字节写入，保留原始换行形式，避免 Windows 文本模式重复转换 `\r\n`。
 - 新增 `EditFileTool`：仅编辑工作区内既有普通 UTF-8 文件，`old_text` 必须非空且仅替换首次精确匹配，`new_text` 可为空以删除内容；找不到匹配文本时返回结构化工具失败。CLI 默认注册该工具，并添加首次替换、删除、路径边界、无效参数、UTF-8 拒绝和真实 Agent Loop 回填测试。
+- 新增 S6 子 Agent 委派契约：`SubagentTask` 保留父 Session、Run、Step 关联、任务说明与验收标准；`SubagentResult` 保留执行结果、摘要、子 Session/Run 关联以及可选证据、工件和未解决风险，所有集合字段均在工厂入口复制为不可变元组。
+- 新增 `SubagentRunner` 协议端口和 23 个契约单元测试，覆盖稳定结果枚举、自动任务标识、父子关联、集合快照、空白与错误类型拒绝、失败/耗尽结果、不可变性和结构化端口实现；本步不改变现有 Runtime、CLI、工具或 Provider 行为。
 
 ## 验证
 
 - `anthropic`、`python-dotenv`、`pytest` 可在 Conda 环境中导入。
 - `ruff` 可运行。
 - 已人工核对 `TDD.md` 与 `AGENT_REQUIREMENTS_CHECKLIST.txt` 的 S01–S30 覆盖关系；本次仅修改文档，未运行代码测试。
-- `python -m pytest`：204 passed（覆盖状态机、JSON 文件状态仓储、会话 Transcript、最小内部事件协议、Runtime 输入编排、内容块模型协议、有界 Agent Loop、统一 logging、受控工具框架、DeepSeek Provider、多轮工具调用闭环、最小交互式启动入口、读写编辑文件工具、Hook 核心闭环、S3 简单权限策略、S5 待办领域契约、JSON Todo 仓储、TodoWrite 工具闭环、Todo 规划系统提示与临时 reminder）。
+- `python -m pytest`：227 passed（覆盖状态机、JSON 文件状态仓储、会话 Transcript、最小内部事件协议、Runtime 输入编排、内容块模型协议、有界 Agent Loop、统一 logging、受控工具框架、DeepSeek Provider、多轮工具调用闭环、最小交互式启动入口、读写编辑文件工具、Hook 核心闭环、S3 简单权限策略、S5 待办领域契约、JSON Todo 仓储、TodoWrite 工具闭环、Todo 规划系统提示与临时 reminder，以及 S6 子 Agent 委派任务、结构化结果和运行器端口契约）。
 - `python -m ruff check src tests`：通过。
 
 ## 下一步
 
-- 由用户检查 S5 TodoWrite 的完整闭环；若按 learnClaude 路线继续，下一步进入 S6 Subagent，先单独设计子 Agent 的上下文边界、委派契约与结果回收，不直接引入并发执行。内置工具自动发现仍作为独立的工具框架演进项，暂不与 S6 混合实现。
+- 由用户检查 S6 子 Agent 契约小步；确认后进入第 2 小步，为工具执行边界新增不可变 `ToolExecutionContext`，让未来 `task` 工具在不依赖全局变量的前提下获得父 Session、Run、Step 与调用关联。该步只改造通用工具上下文传递并保持现有工具行为不变，尚不启动子循环或注册 `task`。
