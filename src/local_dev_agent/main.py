@@ -16,13 +16,20 @@ from local_dev_agent.runtime import MinimalAgentLoop, UserInputRuntimeService
 from local_dev_agent.runtime.loop import AgentLoopResult
 from local_dev_agent.storage.json_state_repository import JsonFileStateRepository
 from local_dev_agent.storage.json_conversation_repository import JsonFileConversationRepository
+from local_dev_agent.storage.conversation_ports import ConversationRepository
 from local_dev_agent.storage.ports import StateRepository
+from local_dev_agent.subagents import (
+    SubagentPolicy,
+    SubagentToolRegistryFactory,
+    SynchronousSubagentRunner,
+)
 from local_dev_agent.todos import JsonFileTodoRepository, TodoReminderPolicy
 from local_dev_agent.tools import ToolRegistry
 from local_dev_agent.tools.builtin import (
     EditFileTool,
     ListFilesTool,
     ReadFileTool,
+    TaskTool,
     TodoWriteTool,
     WriteFileTool,
 )
@@ -31,6 +38,16 @@ from local_dev_agent.tools.builtin import (
 TODO_PLANNING_SYSTEM_PROMPT = """你是本地开发 Agent。
 
 处理包含多个步骤的任务时，先使用 todo_write 创建完整待办清单。开始事项时将其标记为 in_progress；完成并验证后标记为 completed。简单的单步骤任务无需创建待办清单。"""
+
+
+TASK_DELEGATION_SYSTEM_PROMPT = """对于需要独立调查、实现或验证的有界复杂子任务，可使用 task 委派给子 Agent。
+
+task 只返回结构化结论和关联信息；收到结果后由你验收结论，并在需要时自行验证共享工作区中的副作用。简单任务不要委派。"""
+
+
+CLI_SYSTEM_PROMPT = (
+    TODO_PLANNING_SYSTEM_PROMPT + "\n\n" + TASK_DELEGATION_SYSTEM_PROMPT
+)
 
 
 def execute_prompt(
@@ -72,6 +89,27 @@ def create_permission_hook_runner(workspace: Path) -> HookRunner:
     return HookRunner(registry)
 
 
+def create_subagent_runner(
+    *,
+    repository: StateRepository,
+    conversation_repository: ConversationRepository,
+    model: ModelClient,
+    parent_registry: ToolRegistry,
+    hook_runner: HookRunner,
+) -> SynchronousSubagentRunner:
+    """组装受限同步子 Agent，复用本地状态、模型和权限执行边界。"""
+
+    policy = SubagentPolicy()
+    tool_registry_factory = SubagentToolRegistryFactory(parent_registry, policy)
+    return SynchronousSubagentRunner(
+        repository,
+        conversation_repository,
+        model,
+        tool_registry_factory,
+        hook_runner=hook_runner,
+    )
+
+
 def default_workspace() -> Path:
     """返回项目内固定的演示工作区，避免终端当前目录改变工具边界。"""
 
@@ -97,13 +135,22 @@ def main() -> None:
         DeepSeekSettings.from_environment()
     )
     tool_registry = create_tool_registry(workspace)
+    hook_runner = create_permission_hook_runner(workspace)
+    subagent_runner = create_subagent_runner(
+        repository=repository,
+        conversation_repository=conversation_repository,
+        model=model,
+        parent_registry=tool_registry,
+        hook_runner=hook_runner,
+    )
+    tool_registry.register(TaskTool(subagent_runner))
     loop = MinimalAgentLoop(
         repository,
         model,
         tool_registry,
         conversation_repository,
-        hook_runner=create_permission_hook_runner(workspace),
-        system_prompt=TODO_PLANNING_SYSTEM_PROMPT,
+        hook_runner=hook_runner,
+        system_prompt=CLI_SYSTEM_PROMPT,
         todo_reminder_policy=TodoReminderPolicy(),
     )
 

@@ -4,15 +4,25 @@ from pathlib import Path
 from local_dev_agent.domain.state import SessionState
 from local_dev_agent.hooks import HookDecision, HookEvent, PreToolUseContext
 from local_dev_agent.main import create_permission_hook_runner
+from local_dev_agent.main import create_subagent_runner
 from local_dev_agent.main import create_tool_registry
 from local_dev_agent.main import default_workspace
 from local_dev_agent.main import execute_prompt
+from local_dev_agent.main import CLI_SYSTEM_PROMPT
 from local_dev_agent.main import TODO_PLANNING_SYSTEM_PROMPT
+from local_dev_agent.main import TASK_DELEGATION_SYSTEM_PROMPT
 from local_dev_agent.models.fake import FakeModel
-from local_dev_agent.models.ports import ModelResponse
+from local_dev_agent.models.ports import (
+    ModelRequest,
+    ModelResponse,
+    StopReason,
+    ToolUseBlock,
+)
 from local_dev_agent.runtime.loop import MinimalAgentLoop
+from local_dev_agent.storage.json_conversation_repository import JsonFileConversationRepository
 from local_dev_agent.storage.json_state_repository import JsonFileStateRepository
 from local_dev_agent.tools import ToolCallRequest
+from local_dev_agent.tools.builtin import TaskTool
 
 
 def test_execute_prompt_connects_input_service_to_agent_loop(tmp_path) -> None:
@@ -84,3 +94,96 @@ def test_cli_todo_planning_prompt_mentions_the_tool_and_status_updates() -> None
     assert "todo_write" in TODO_PLANNING_SYSTEM_PROMPT
     assert "in_progress" in TODO_PLANNING_SYSTEM_PROMPT
     assert "completed" in TODO_PLANNING_SYSTEM_PROMPT
+
+
+def test_cli_system_prompt_adds_bounded_task_delegation_guidance() -> None:
+    assert TODO_PLANNING_SYSTEM_PROMPT in CLI_SYSTEM_PROMPT
+    assert TASK_DELEGATION_SYSTEM_PROMPT in CLI_SYSTEM_PROMPT
+    assert "task" in TASK_DELEGATION_SYSTEM_PROMPT
+    assert "简单任务不要委派" in TASK_DELEGATION_SYSTEM_PROMPT
+
+
+class ScriptedModel:
+    """按顺序返回父子 Agent 响应，验证 CLI 装配闭环。"""
+
+    def __init__(self, responses: tuple[ModelResponse, ...]) -> None:
+        self._responses = list(responses)
+        self.requests: list[ModelRequest] = []
+
+    def generate(self, request: ModelRequest) -> ModelResponse:
+        """记录请求并返回下一项预设响应。"""
+
+        self.requests.append(request)
+        if not self._responses:
+            raise AssertionError("测试模型没有更多预设响应。")
+        return self._responses.pop(0)
+
+
+def test_cli_composition_registers_task_and_keeps_it_out_of_child_tools(tmp_path) -> None:
+    timestamp = datetime(2026, 7, 25, 8, 0, tzinfo=timezone.utc)
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    repository = JsonFileStateRepository(workspace / "var" / "state")
+    conversation_repository = JsonFileConversationRepository(workspace / "var" / "state")
+    session = SessionState.create(
+        session_id="session-parent",
+        tenant_id="local",
+        user_id="local",
+        project_id=str(workspace),
+        created_at=timestamp,
+    )
+    repository.save_session(session)
+    model = ScriptedModel(
+        (
+            ModelResponse(
+                stop_reason=StopReason.TOOL_USE,
+                content=(
+                    ToolUseBlock(
+                        tool_use_id="toolu-parent",
+                        name="task",
+                        input={"description": "调查测试框架。"},
+                    ),
+                ),
+            ),
+            ModelResponse.text_completion("子 Agent 返回 pytest。"),
+            ModelResponse.text_completion("父 Agent 已验收子任务结论。"),
+        )
+    )
+    registry = create_tool_registry(workspace)
+    hook_runner = create_permission_hook_runner(workspace)
+    registry.register(
+        TaskTool(
+            create_subagent_runner(
+                repository=repository,
+                conversation_repository=conversation_repository,
+                model=model,
+                parent_registry=registry,
+                hook_runner=hook_runner,
+            )
+        )
+    )
+    loop = MinimalAgentLoop(
+        repository,
+        model,
+        registry,
+        conversation_repository,
+        hook_runner=hook_runner,
+        system_prompt=CLI_SYSTEM_PROMPT,
+    )
+
+    result = execute_prompt(
+        prompt="请调查项目测试框架。",
+        session=session,
+        repository=repository,
+        loop=loop,
+    )
+
+    parent_request, child_request, parent_follow_up = model.requests
+    assert result.response.text == "父 Agent 已验收子任务结论。"
+    assert "task" in [definition.name for definition in parent_request.tools]
+    assert "task" not in [definition.name for definition in child_request.tools]
+    assert "todo_write" not in [definition.name for definition in child_request.tools]
+    assert child_request.system_prompt != CLI_SYSTEM_PROMPT
+    assert parent_follow_up.conversation[2].content[0].content["summary"] == (
+        "子 Agent 返回 pytest。"
+    )

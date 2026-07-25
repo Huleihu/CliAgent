@@ -24,6 +24,8 @@
 - 已完成 `learnClaude/s06_subagent` 的第 3 个教学式小步：新增不可变 `SubagentPolicy` 与 `SubagentToolRegistryFactory`；策略在应用装配层固定最大模型轮次、子系统提示和工具白名单，并硬拒绝 `task`、`todo_write`，工厂从父工具目录创建新的受限子目录。当前仍未启动独立子循环或注册 `task`。
 - 已完成 `learnClaude/s06_subagent` 的第 4 个教学式小步：实现同步 `SynchronousSubagentRunner`；它仅从父 Session 复制身份与项目边界，创建独立子 Session、Run、Transcript 后以受限工具目录执行既有 `MinimalAgentLoop`，正常完成或轮次耗尽时仅返回结构化 `SubagentResult`。当前仍未注册父侧 `task` 工具。
 - 已完成 `learnClaude/s06_subagent` 的第 5 个教学式小步：新增父侧 `TaskTool`，仅从 `ToolExecutionContext` 构造 `SubagentTask` 并调用运行器，向父模型回填结构化结论；带 `delegation` 标签的工具调用会持久化为 `StepType.DELEGATE`。当前仍未在 CLI 注册 `task`。
+- 已完成 `learnClaude/s06_subagent` 的第 6 个教学式小步：CLI 组合根现装配受限子工具目录、同步运行器和父侧 `task` 工具，并向父系统提示注入受控委派指导；端到端测试确认父模型可调用 `task`、子模型看不到 `task` 与 `todo_write`，父模型在收到子结论后继续验收。
+- 已完成当前范围的 `learnClaude/s06_subagent` 同步闭环：父侧 `task`、独立子 Session/Run/Transcript、受限子工具目录、权限 Hook 复用、结构化结果回填和 `DELEGATE` 步骤审计均已实现；当前刻意不包含异步/并发子 Agent、递归委派、Prompt Cache Fork、Team 或 Worktree 隔离。
 - 使用 Conda 环境 `local-dev-agent`（Python 3.13）。
 
 ## 已完成
@@ -32,6 +34,7 @@
 - 添加 `requirements.txt` 并安装运行、测试和静态检查依赖。
 - 配置 VS Code 使用 `local-dev-agent` 解释器（本地 `.vscode/settings.json`）。
 - 添加项目开发规则：`AGENTS.md`。
+- 更新 learnClaudeCode 集成规则：每个 S 章节实现前，先说明问题与项目集成方式，给出不超过 5 步的教学式方案并等待用户确认；每一步保持可理解、可验证并在完成后停下交接。
 - 约定提交信息使用 Conventional Commits 标题与项目符号正文。
 - 已配置本仓库 Git 身份，并完成首次提交 `chore: 初始化项目开发环境`；提交标题与正文使用中文。
 - 添加 `environment.yml`、`.env.example` 与根目录 `README.md`，完善环境复现和项目上手说明。
@@ -141,16 +144,18 @@
 - 运行器复用 `MinimalAgentLoop`、同一模型客户端、受限子工具目录和可选 HookRunner；正常完成返回摘要与子 Session/Run 关联，达到预算上限时返回 `exhausted` 结果，其他运行时异常继续抛出而不伪装为完成。补充 5 个单元测试，覆盖上下文隔离、工具白名单、Hook 复用、轮次耗尽和缺失父会话。
 - 新增父侧 `TaskTool`：模型仅可提交任务说明和可选验收标准，父 Session、Run、Step 关联只从 `ToolExecutionContext` 读取；工具将 `SubagentResult` 序列化为 JSON 原生值回填模型，不泄漏子 Agent 的中间消息历史。
 - 新增本地 `delegation` 工具标签；`MinimalAgentLoop` 根据标签将委派调用保存为 `StepType.DELEGATE`，未知工具仍保持普通 `TOOL` 步骤，避免破坏既有结构化失败回填。补充 9 个单元测试，覆盖 TaskTool 参数、上下文、结果、运行器端口、委派 Step 和父模型结果回填；本步刻意未修改 CLI 注册。
+- CLI 组合根现创建共享的状态仓储、Conversation 仓储、模型和 Permission HookRunner，再以基础父工具目录组装 `SynchronousSubagentRunner` 并注册 `TaskTool`；子目录始终由策略白名单创建，不会继承父侧 `task` 或 `todo_write`。
+- 新增父系统提示中的受控委派说明，以及 CLI 端到端测试：验证真实装配路径中的父 `task` 调用、子模型隔离工具目录和父模型对结构化子结论的后续验收。
 
 ## 验证
 
 - `anthropic`、`python-dotenv`、`pytest` 可在 Conda 环境中导入。
 - `ruff` 可运行。
 - 已人工核对 `TDD.md` 与 `AGENT_REQUIREMENTS_CHECKLIST.txt` 的 S01–S30 覆盖关系；本次仅修改文档，未运行代码测试。
-- `python -m pytest`：256 passed（覆盖状态机、JSON 文件状态仓储、会话 Transcript、最小内部事件协议、Runtime 输入编排、内容块模型协议、有界 Agent Loop、统一 logging、受控工具框架、DeepSeek Provider、多轮工具调用闭环、最小交互式启动入口、读写编辑文件工具、Hook 核心闭环、S3 简单权限策略、S5 待办领域契约、JSON Todo 仓储、TodoWrite 工具闭环、Todo 规划系统提示与临时 reminder，以及 S6 子 Agent 委派契约、执行上下文、能力策略、受限工具目录、同步隔离运行器和父侧 task 工具回填）。
+- `python -m pytest`：258 passed（覆盖状态机、JSON 文件状态仓储、会话 Transcript、最小内部事件协议、Runtime 输入编排、内容块模型协议、有界 Agent Loop、统一 logging、受控工具框架、DeepSeek Provider、多轮工具调用闭环、最小交互式启动入口、读写编辑文件工具、Hook 核心闭环、S3 简单权限策略、S5 待办领域契约、JSON Todo 仓储、TodoWrite 工具闭环、Todo 规划系统提示与临时 reminder，以及完整 S6 同步子 Agent 闭环）。
 - 本次最终全量测试首次在受限沙箱内清理 `.pytest-tmp` 时遇到 Windows 权限错误；使用已批准的相同 `python -m pytest` 命令在沙箱外重跑后 228 项全部通过，未出现代码断言失败。
 - `python -m ruff check src tests`：通过。
 
 ## 下一步
 
-- 由用户检查 S6 父侧 task 工具小步；确认后进入第 6 小步，在 CLI 组合根装配 `SynchronousSubagentRunner` 与 `TaskTool`，向父系统提示增加受控委派指导，并补充从真实父工具目录到子工具目录的端到端测试，形成 S6 同步闭环。
+- 由用户检查完整 S6 同步子 Agent 闭环；若按 learnClaude 路线继续，下一步进入 S7 Skill Loading，先单独设计技能元数据、受控目录加载与按需提示注入边界，不将技能文档直接写入常驻系统提示。
