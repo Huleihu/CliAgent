@@ -67,9 +67,14 @@ class MinimalAgentLoop:
         *,
         max_turns: int = 10,
         hook_runner: HookRunner | None = None,
+        system_prompt: str | None = None,
     ) -> None:
         if max_turns < 1:
             raise ValueError("Agent Loop 的最大模型调用轮次必须大于或等于 1。")
+        if system_prompt is not None and (
+            not isinstance(system_prompt, str) or not system_prompt.strip()
+        ):
+            raise ValueError("Agent Loop 的系统提示必须是非空字符串。")
         self._repository = repository
         self._model = model
         self._registry = registry or ToolRegistry()
@@ -77,6 +82,7 @@ class MinimalAgentLoop:
         self._hook_runner = hook_runner
         self._executor = ToolExecutor(self._registry, hook_runner=hook_runner)
         self._max_turns = max_turns
+        self._system_prompt = system_prompt
 
     def execute(
         self,
@@ -322,6 +328,7 @@ class MinimalAgentLoop:
                     run_id=run_id,
                     messages=conversation,
                     tools=self._registry.list_definitions(),
+                    system_prompt=self._system_prompt,
                 )
             )
         except Exception:

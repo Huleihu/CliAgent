@@ -28,6 +28,11 @@ from local_dev_agent.tools.builtin import (
 )
 
 
+TODO_PLANNING_SYSTEM_PROMPT = """你是本地开发 Agent。
+
+处理包含多个步骤的任务时，先使用 todo_write 创建完整待办清单。开始事项时将其标记为 in_progress；完成并验证后标记为 completed。简单的单步骤任务无需创建待办清单。"""
+
+
 def execute_prompt(
     *,
     prompt: str,
@@ -98,6 +103,7 @@ def main() -> None:
         tool_registry,
         conversation_repository,
         hook_runner=create_permission_hook_runner(workspace),
+        system_prompt=TODO_PLANNING_SYSTEM_PROMPT,
     )
 
     print("Local Dev Agent")

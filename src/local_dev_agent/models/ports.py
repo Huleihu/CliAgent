@@ -135,6 +135,7 @@ class ModelRequest:
     user_input: str | None = None
     messages: tuple[ModelMessage, ...] = ()
     tools: tuple[ToolDefinition, ...] = ()
+    system_prompt: str | None = None
 
     def __post_init__(self) -> None:
         """兼容旧的单文本调用，同时拒绝两种上下文来源混用。"""
@@ -143,6 +144,8 @@ class ModelRequest:
         _require_non_empty_text("run_id", self.run_id)
         if self.user_input is not None:
             _require_non_empty_text("user_input", self.user_input)
+        if self.system_prompt is not None:
+            _require_non_empty_text("system_prompt", self.system_prompt)
         if not isinstance(self.messages, tuple):
             raise ValueError("模型请求的 messages 必须是元组。")
         if not isinstance(self.tools, tuple) or not all(
@@ -162,6 +165,7 @@ class ModelRequest:
         run_id: str,
         messages: tuple[ModelMessage, ...],
         tools: tuple[ToolDefinition, ...] = (),
+        system_prompt: str | None = None,
     ) -> "ModelRequest":
         """创建携带完整多轮上下文的请求。"""
 
@@ -170,6 +174,7 @@ class ModelRequest:
             run_id=run_id,
             messages=messages,
             tools=tools,
+            system_prompt=system_prompt,
         )
 
     @property

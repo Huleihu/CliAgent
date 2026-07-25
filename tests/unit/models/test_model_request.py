@@ -129,3 +129,30 @@ def test_model_request_preserves_tool_definitions_for_the_provider() -> None:
     )
 
     assert request.tools == (tool,)
+
+
+def test_model_request_preserves_an_optional_system_prompt() -> None:
+    request = ModelRequest.from_messages(
+        session_id="session-1",
+        run_id="run-1",
+        messages=(
+            ModelMessage(
+                role=MessageRole.USER,
+                content=(TextBlock("检查项目状态。"),),
+            ),
+        ),
+        system_prompt="优先维护待办清单。",
+    )
+
+    assert request.system_prompt == "优先维护待办清单。"
+
+
+@pytest.mark.parametrize("system_prompt", ["", "   "])
+def test_model_request_rejects_blank_system_prompt(system_prompt: str) -> None:
+    with pytest.raises(ValueError, match="字段“system_prompt”必须是非空字符串"):
+        ModelRequest(
+            session_id="session-1",
+            run_id="run-1",
+            user_input="检查项目状态。",
+            system_prompt=system_prompt,
+        )

@@ -286,6 +286,26 @@ def test_model_client_declares_registered_tool_definitions_when_requested() -> N
     ]
 
 
+def test_model_client_sends_an_optional_system_prompt_only_when_configured() -> None:
+    client = FakeAnthropicClient(
+        FakeMessage(stop_reason="end_turn", content=[FakeTextContent("已完成。")])
+    )
+    model = DeepSeekAnthropicModelClient(_settings(), client=client)
+
+    model.generate(_request())
+    model.generate(
+        ModelRequest(
+            session_id="session-1",
+            run_id="run-2",
+            user_input="更新待办清单。",
+            system_prompt="多步骤任务先维护待办清单。",
+        )
+    )
+
+    assert "system" not in client.messages.calls[0]
+    assert client.messages.calls[1]["system"] == "多步骤任务先维护待办清单。"
+
+
 def test_model_client_wraps_provider_failure_in_chinese_error() -> None:
     model = DeepSeekAnthropicModelClient(
         _settings(),

@@ -7,6 +7,7 @@ from local_dev_agent.main import create_permission_hook_runner
 from local_dev_agent.main import create_tool_registry
 from local_dev_agent.main import default_workspace
 from local_dev_agent.main import execute_prompt
+from local_dev_agent.main import TODO_PLANNING_SYSTEM_PROMPT
 from local_dev_agent.models.fake import FakeModel
 from local_dev_agent.models.ports import ModelResponse
 from local_dev_agent.runtime.loop import MinimalAgentLoop
@@ -77,3 +78,9 @@ def test_default_workspace_is_the_project_sandbox_directory() -> None:
     expected_workspace = Path(__file__).resolve().parents[2] / "sandbox"
 
     assert default_workspace() == expected_workspace.resolve()
+
+
+def test_cli_todo_planning_prompt_mentions_the_tool_and_status_updates() -> None:
+    assert "todo_write" in TODO_PLANNING_SYSTEM_PROMPT
+    assert "in_progress" in TODO_PLANNING_SYSTEM_PROMPT
+    assert "completed" in TODO_PLANNING_SYSTEM_PROMPT

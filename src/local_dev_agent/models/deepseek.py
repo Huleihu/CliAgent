@@ -51,6 +51,8 @@ class DeepSeekAnthropicModelClient:
             request_parameters["tools"] = [
                 self._map_tool_definition(tool) for tool in request.tools
             ]
+        if request.system_prompt is not None:
+            request_parameters["system"] = request.system_prompt
         try:
             response = self._client.messages.create(**request_parameters)
         except Exception as error:
