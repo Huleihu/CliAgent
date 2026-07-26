@@ -14,6 +14,11 @@ from local_dev_agent.observability import configure_logging
 from local_dev_agent.permissions import PermissionHook, SimplePermissionPolicy
 from local_dev_agent.runtime import MinimalAgentLoop, UserInputRuntimeService
 from local_dev_agent.runtime.loop import AgentLoopResult
+from local_dev_agent.skills import (
+    FileSystemSkillCatalogLoader,
+    SkillCatalog,
+    format_skill_catalog,
+)
 from local_dev_agent.storage.json_state_repository import JsonFileStateRepository
 from local_dev_agent.storage.json_conversation_repository import JsonFileConversationRepository
 from local_dev_agent.storage.conversation_ports import ConversationRepository
@@ -28,6 +33,7 @@ from local_dev_agent.tools import ToolRegistry
 from local_dev_agent.tools.builtin import (
     EditFileTool,
     ListFilesTool,
+    LoadSkillTool,
     ReadFileTool,
     TaskTool,
     TodoWriteTool,
@@ -50,6 +56,12 @@ CLI_SYSTEM_PROMPT = (
 )
 
 
+def build_cli_system_prompt(skill_catalog: SkillCatalog) -> str:
+    """组合稳定 CLI 指导和仅含元数据的启动时技能目录。"""
+
+    return CLI_SYSTEM_PROMPT + "\n\n" + format_skill_catalog(skill_catalog)
+
+
 def execute_prompt(
     *,
     prompt: str,
@@ -64,7 +76,11 @@ def execute_prompt(
     return loop.execute(start)
 
 
-def create_tool_registry(workspace: Path) -> ToolRegistry:
+def create_tool_registry(
+    workspace: Path,
+    *,
+    skill_catalog: SkillCatalog | None = None,
+) -> ToolRegistry:
     """组装 CLI 默认可用的低风险工具，避免入口直接依赖工具细节。"""
 
     registry = ToolRegistry()
@@ -75,6 +91,8 @@ def create_tool_registry(workspace: Path) -> ToolRegistry:
     registry.register(
         TodoWriteTool(JsonFileTodoRepository(workspace / "var" / "state" / "todos"))
     )
+    if skill_catalog is not None:
+        registry.register(LoadSkillTool(skill_catalog))
     return registry
 
 
@@ -134,7 +152,8 @@ def main() -> None:
     model: ModelClient = DeepSeekAnthropicModelClient(
         DeepSeekSettings.from_environment()
     )
-    tool_registry = create_tool_registry(workspace)
+    skill_catalog = FileSystemSkillCatalogLoader(workspace).load()
+    tool_registry = create_tool_registry(workspace, skill_catalog=skill_catalog)
     hook_runner = create_permission_hook_runner(workspace)
     subagent_runner = create_subagent_runner(
         repository=repository,
@@ -150,7 +169,7 @@ def main() -> None:
         tool_registry,
         conversation_repository,
         hook_runner=hook_runner,
-        system_prompt=CLI_SYSTEM_PROMPT,
+        system_prompt=build_cli_system_prompt(skill_catalog),
         todo_reminder_policy=TodoReminderPolicy(),
     )
 
