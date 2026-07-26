@@ -80,7 +80,15 @@ class FileSystemSkillCatalogLoader:
             if metadata.name in known_names:
                 raise SkillCatalogLoadError(f"技能目录包含重复名称：{metadata.name}。")
             known_names.add(metadata.name)
-            documents.append(SkillDocument(metadata=metadata, content=content))
+            documents.append(
+                SkillDocument(
+                    metadata=metadata,
+                    source_directory=skill_directory.relative_to(
+                        self._workspace
+                    ).as_posix(),
+                    content=content,
+                )
+            )
             if len(documents) > self._max_documents:
                 raise SkillCatalogLoadError(
                     f"技能目录中的文档数量不能超过 {self._max_documents}。"

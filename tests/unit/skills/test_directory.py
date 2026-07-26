@@ -55,6 +55,7 @@ def test_loader_creates_a_sorted_snapshot_from_direct_skill_directories(
     assert catalog.get_document("code-review").content == code_review.read_bytes().decode(
         "utf-8"
     )
+    assert catalog.get_document("code-review").source_directory == "skills/z-review"
     assert catalog.get_document("code-review").metadata.description == "审查 代码。"
 
 

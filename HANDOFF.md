@@ -28,6 +28,7 @@
 - 已完成当前范围的 `learnClaude/s06_subagent` 同步闭环：父侧 `task`、独立子 Session/Run/Transcript、受限子工具目录、权限 Hook 复用、结构化结果回填和 `DELEGATE` 步骤审计均已实现；当前刻意不包含异步/并发子 Agent、递归委派、Prompt Cache Fork、Team 或 Worktree 隔离。
 - 已完成 `learnClaude/s07_skill_loading` 的第 1 个教学式小步：新增独立 `local_dev_agent.skills` 契约包，以不可变 `SkillMetadata` 和 `SkillDocument` 表示目录元数据与完整文档快照；安全 YAML frontmatter 解析器直接返回 `SkillMetadata`，仅提取 `name`、`description` 并将多行描述规范化为目录可用的单行文本。当前尚未扫描技能目录、注册 `load_skill` 工具或修改 CLI 系统提示。
 - 已完成 `learnClaude/s07_skill_loading` 的第 2 个教学式小步：新增不可变 `SkillCatalog` 与 `FileSystemSkillCatalogLoader`，仅扫描工作区 `skills/` 的直接子目录并一次性保存完整文档快照；缺少目录返回空快照，重复名称、越界解析路径、非 UTF-8 清单、无效 frontmatter 及数量或字节预算超限均以中文错误拒绝。当前尚未注册 `load_skill` 工具或修改 CLI 系统提示。
+- 已完成 `learnClaude/s07_skill_loading` 的第 3 个教学式小步：新增有界技能目录提示格式化器，仅输出排序后的技能名称和描述，绝不输出正文；新增只读 `load_skill` 工具，按精确名称从启动快照返回完整正文和受控相对技能目录，并复用现有参数校验、Hook、权限和结构化工具结果链路。当前尚未修改 CLI 装配。
 - 使用 Conda 环境 `local-dev-agent`（Python 3.13）。
 
 ## 已完成
@@ -152,15 +153,17 @@
 - 新增 13 项 Skill 单元测试，覆盖多行 YAML 描述、未知扩展字段兼容、格式错误、不可变性与原始正文保留；`requirements.txt` 新增 `PyYAML` 运行时依赖，避免手写 YAML 解析器错误处理标准 frontmatter。
 - 新增 S7 受控技能目录加载器与不可变 `SkillCatalog`：加载器按技能名称稳定排序，按精确名称查询而不解释为路径，并只接受工作区下单层 `skills/` 目录中的直接子目录清单；加载完成后的目录与正文快照不受磁盘后续改动影响。
 - 新增 11 项目录与目录快照单元测试，覆盖缺失目录、直接子目录扫描、排序、重复名称、UTF-8、frontmatter、数量和字节预算、目录参数与非目录路径；正文读取使用字节解码以保留原始换行形式。
+- 新增 S7 技能目录提示格式化器：目录仅包含名称、描述和 `load_skill` 使用指引，并以默认 8,000 字符预算拒绝超长提示，完整 Skill 正文始终留在目录快照中等待按需返回。
+- 新增只读 `LoadSkillTool`：工具仅接受精确技能名称，不解释任何文件路径，成功时返回名称、描述、受控相对目录和完整原始正文；未知或无效名称沿既有工具执行器收束为结构化失败。补充 11 项提示与工具测试，覆盖正文隔离、空目录、预算、快照返回、参数校验和结构化失败。
 
 ## 验证
 
 - `anthropic`、`python-dotenv`、`pytest` 可在 Conda 环境中导入。
 - `ruff` 可运行。
 - 已人工核对 `TDD.md` 与 `AGENT_REQUIREMENTS_CHECKLIST.txt` 的 S01–S30 覆盖关系；本次仅修改文档，未运行代码测试。
-- `python -m pytest`：282 passed（覆盖状态机、JSON 文件状态仓储、会话 Transcript、最小内部事件协议、Runtime 输入编排、内容块模型协议、有界 Agent Loop、统一 logging、受控工具框架、DeepSeek Provider、多轮工具调用闭环、最小交互式启动入口、读写编辑文件工具、Hook 核心闭环、S3 简单权限策略、S5 待办领域契约、JSON Todo 仓储、TodoWrite 工具闭环、Todo 规划系统提示与临时 reminder、完整 S6 同步子 Agent 闭环，以及 S7 技能契约、frontmatter 和受控目录加载）。
+- `python -m pytest`：293 passed（覆盖状态机、JSON 文件状态仓储、会话 Transcript、最小内部事件协议、Runtime 输入编排、内容块模型协议、有界 Agent Loop、统一 logging、受控工具框架、DeepSeek Provider、多轮工具调用闭环、最小交互式启动入口、读写编辑文件工具、Hook 核心闭环、S3 简单权限策略、S5 待办领域契约、JSON Todo 仓储、TodoWrite 工具闭环、Todo 规划系统提示与临时 reminder、完整 S6 同步子 Agent 闭环，以及 S7 技能契约、frontmatter、受控目录加载、目录提示和按需加载工具）。
 - `python -m ruff check src tests`：通过。
 
 ## 下一步
 
-- 由用户检查 S7 第 2 个教学式小步；确认后进入第 3 步，实现仅展示技能名称和描述的目录提示格式化器，并新增按精确名称返回完整快照正文的 `load_skill` 工具；届时仍不修改 CLI 装配。
+- 由用户检查 S7 第 3 个教学式小步；确认后进入第 4 步，在 CLI 组合根加载工作区技能目录、注册父侧 `load_skill` 并构造动态系统提示，同时验证子 Agent 仍不继承该工具或技能正文。

@@ -33,6 +33,7 @@ class SkillDocument:
     """一份技能文档的完整不可变快照，不等同于系统提示内容。"""
 
     metadata: SkillMetadata
+    source_directory: str
     content: str
 
     def __post_init__(self) -> None:
@@ -40,6 +41,12 @@ class SkillDocument:
 
         if not isinstance(self.metadata, SkillMetadata):
             raise ValueError("字段“metadata”必须是 SkillMetadata 对象。")
+        source_directory = _require_nonempty_text(
+            "source_directory", self.source_directory
+        )
+        if source_directory.startswith("/") or "\\" in source_directory or ".." in source_directory.split("/"):
+            raise ValueError("字段“source_directory”必须是受控的相对目录。")
+        object.__setattr__(self, "source_directory", source_directory)
         _require_nonempty_text("content", self.content)
 
 

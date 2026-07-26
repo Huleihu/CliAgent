@@ -38,18 +38,41 @@ def test_skill_document_requires_metadata_and_preserves_raw_content() -> None:
     metadata = SkillMetadata(name="code-review", description="审查代码。")
     content = "---\nname: code-review\ndescription: 审查代码。\n---\n\n# 正文\n"
 
-    document = SkillDocument(metadata=metadata, content=content)
+    document = SkillDocument(
+        metadata=metadata,
+        source_directory="skills/code-review",
+        content=content,
+    )
 
     assert document.content == content
+    assert document.source_directory == "skills/code-review"
     with pytest.raises(ValueError, match="字段“metadata”必须是 SkillMetadata 对象"):
-        SkillDocument(metadata="code-review", content=content)  # type: ignore[arg-type]
+        SkillDocument(  # type: ignore[arg-type]
+            metadata="code-review",
+            source_directory="skills/code-review",
+            content=content,
+        )
     with pytest.raises(ValueError, match="字段“content”必须是非空字符串"):
-        SkillDocument(metadata=metadata, content=" ")
+        SkillDocument(
+            metadata=metadata,
+            source_directory="skills/code-review",
+            content=" ",
+        )
+    with pytest.raises(ValueError, match="必须是受控的相对目录"):
+        SkillDocument(
+            metadata=metadata,
+            source_directory="../outside",
+            content=content,
+        )
 
 
 def test_skill_models_cannot_be_mutated_directly() -> None:
     metadata = SkillMetadata(name="code-review", description="审查代码。")
-    document = SkillDocument(metadata=metadata, content="# 正文")
+    document = SkillDocument(
+        metadata=metadata,
+        source_directory="skills/code-review",
+        content="# 正文",
+    )
 
     with pytest.raises(FrozenInstanceError):
         metadata.name = "pdf"  # type: ignore[misc]
@@ -60,10 +83,12 @@ def test_skill_models_cannot_be_mutated_directly() -> None:
 def test_skill_catalog_exposes_metadata_and_uses_exact_name_lookup() -> None:
     code_review = SkillDocument(
         metadata=SkillMetadata(name="code-review", description="审查代码。"),
+        source_directory="skills/code-review",
         content="# Code Review",
     )
     pdf = SkillDocument(
         metadata=SkillMetadata(name="pdf", description="处理 PDF。"),
+        source_directory="skills/pdf",
         content="# PDF",
     )
     catalog = SkillCatalog(documents=(code_review, pdf))
@@ -78,10 +103,12 @@ def test_skill_catalog_exposes_metadata_and_uses_exact_name_lookup() -> None:
 def test_skill_catalog_rejects_unstable_or_duplicate_documents() -> None:
     code_review = SkillDocument(
         metadata=SkillMetadata(name="code-review", description="审查代码。"),
+        source_directory="skills/code-review",
         content="# Code Review",
     )
     pdf = SkillDocument(
         metadata=SkillMetadata(name="pdf", description="处理 PDF。"),
+        source_directory="skills/pdf",
         content="# PDF",
     )
 

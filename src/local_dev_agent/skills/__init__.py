@@ -3,6 +3,7 @@
 from .directory import FileSystemSkillCatalogLoader
 from .errors import SkillCatalogLoadError, SkillFrontmatterError
 from .frontmatter import parse_skill_frontmatter
+from .prompt import format_skill_catalog
 from .schema import SkillCatalog, SkillDocument, SkillMetadata
 
 __all__ = [
@@ -13,4 +14,5 @@ __all__ = [
     "SkillFrontmatterError",
     "SkillMetadata",
     "parse_skill_frontmatter",
+    "format_skill_catalog",
 ]
