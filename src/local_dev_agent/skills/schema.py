@@ -41,3 +41,42 @@ class SkillDocument:
         if not isinstance(self.metadata, SkillMetadata):
             raise ValueError("字段“metadata”必须是 SkillMetadata 对象。")
         _require_nonempty_text("content", self.content)
+
+
+@dataclass(frozen=True, slots=True)
+class SkillCatalog:
+    """一次启动扫描生成的技能目录不可变快照。"""
+
+    documents: tuple[SkillDocument, ...] = ()
+
+    def __post_init__(self) -> None:
+        """拒绝不稳定排序与重复查询键，避免模型看到含糊目录。"""
+
+        if not isinstance(self.documents, tuple) or not all(
+            isinstance(document, SkillDocument) for document in self.documents
+        ):
+            raise ValueError("技能目录必须是 SkillDocument 元组。")
+        names = tuple(document.metadata.name for document in self.documents)
+        if names != tuple(sorted(names)):
+            raise ValueError("技能目录必须按技能名称升序排列。")
+        if len(set(names)) != len(names):
+            raise ValueError("技能目录不能包含重复名称。")
+
+    @property
+    def metadata(self) -> tuple[SkillMetadata, ...]:
+        """返回仅供目录展示的元数据，避免调用方误用完整正文。"""
+
+        return tuple(document.metadata for document in self.documents)
+
+    def get_document(self, name: str) -> SkillDocument | None:
+        """按精确技能名称查询文档，不将名称解释为文件路径。"""
+
+        normalized_name = _require_nonempty_text("name", name)
+        return next(
+            (
+                document
+                for document in self.documents
+                if document.metadata.name == normalized_name
+            ),
+            None,
+        )
