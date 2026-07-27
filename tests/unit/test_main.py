@@ -63,6 +63,7 @@ def test_create_tool_registry_registers_the_read_only_file_listing_tool(tmp_path
         "compact",
         "edit_file",
         "list_files",
+        "read_artifact",
         "read_file",
         "todo_write",
         "write_file",
@@ -226,11 +227,13 @@ def test_cli_composition_registers_task_and_keeps_it_out_of_child_tools(tmp_path
     assert result.response.text == "父 Agent 已验收子任务结论。"
     assert "task" in [definition.name for definition in parent_request.tools]
     assert "compact" in [definition.name for definition in parent_request.tools]
+    assert "read_artifact" in [definition.name for definition in parent_request.tools]
     assert "load_skill" in [definition.name for definition in parent_request.tools]
     assert "task" not in [definition.name for definition in child_request.tools]
     assert "todo_write" not in [definition.name for definition in child_request.tools]
     assert "load_skill" not in [definition.name for definition in child_request.tools]
     assert "compact" not in [definition.name for definition in child_request.tools]
+    assert "read_artifact" not in [definition.name for definition in child_request.tools]
     assert child_request.system_prompt != build_cli_system_prompt(catalog)
     assert parent_follow_up.conversation[2].content[0].content["summary"] == (
         "子 Agent 返回 pytest。"

@@ -180,7 +180,7 @@ class ToolResultBudgetCompactor:
                 content={
                     "artifact_ref": artifact.relative_path,
                     "preview": preview,
-                    "notice": "完整结果已保存；如需完整内容，请重新执行该工具调用。",
+                    "notice": "完整结果已保存；可调用 read_artifact 并传入 artifact_ref 分段读取。",
                 },
             )
             if self._content_size_bytes(replacement) < original_size_bytes:

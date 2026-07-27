@@ -49,6 +49,7 @@ from local_dev_agent.tools.builtin import (
     EditFileTool,
     ListFilesTool,
     ReadFileTool,
+    ReadArtifactTool,
     TodoWriteTool,
     WriteFileTool,
 )
@@ -89,6 +90,49 @@ class RecordingSummarizer:
     def summarize(self, snapshot) -> str:
         self.snapshots.append(snapshot)
         return self._summary
+
+
+class ArtifactReadingModel:
+    """模拟从派生上下文取得 Artifact 引用后按需读取的模型。"""
+
+    def __init__(self) -> None:
+        self.requests: list[ModelRequest] = []
+        self.artifact_refs: list[str] = []
+
+    def generate(self, request: ModelRequest) -> ModelResponse:
+        """按固定三轮路径请求大结果、读取 Artifact 并完成回复。"""
+
+        self.requests.append(request)
+        if len(self.requests) == 1:
+            return ModelResponse(
+                stop_reason=StopReason.TOOL_USE,
+                content=(
+                    ToolUseBlock(
+                        tool_use_id="toolu-large",
+                        name="large_result",
+                        input={},
+                    ),
+                ),
+            )
+        if len(self.requests) == 2:
+            result_block = request.conversation[-1].content[0]
+            assert isinstance(result_block, ToolResultBlock)
+            artifact_ref = result_block.content["artifact_ref"]
+            assert isinstance(artifact_ref, str)
+            self.artifact_refs.append(artifact_ref)
+            return ModelResponse(
+                stop_reason=StopReason.TOOL_USE,
+                content=(
+                    ToolUseBlock(
+                        tool_use_id="toolu-artifact",
+                        name="read_artifact",
+                        input={"artifact_ref": artifact_ref, "max_characters": 50},
+                    ),
+                ),
+            )
+        if len(self.requests) == 3:
+            return ModelResponse.text_completion("已读取 Artifact 的首段内容。")
+        raise AssertionError("测试模型收到超出预期的调用次数。")
 
 
 class BlockingPreToolHook:
@@ -1400,3 +1444,72 @@ def test_minimal_agent_loop_compacts_the_next_request_after_a_successful_compact
         ),
     )
     assert result.response.text == "已在压缩上下文后继续处理。"
+
+
+def test_minimal_agent_loop_allows_the_model_to_read_an_artifact_reference(tmp_path) -> None:
+    timestamp = datetime(2026, 7, 27, 11, 0, tzinfo=timezone.utc)
+    repository = JsonFileStateRepository(tmp_path / "state")
+    conversation_repository = JsonFileConversationRepository(tmp_path / "state")
+    session = SessionState.create(
+        session_id="session-1",
+        tenant_id="tenant-1",
+        user_id="user-1",
+        project_id="project-1",
+        created_at=timestamp,
+    )
+    repository.save_session(session)
+    start = UserInputRuntimeService(repository).handle(
+        UserInputEvent.create(
+            session_id=session.session_id,
+            content="读取大型日志并检查开头。",
+            occurred_at=timestamp,
+        )
+    )
+    store = FileSystemToolResultArtifactStore(tmp_path / "artifacts")
+    registry = ToolRegistry()
+    registry.register(
+        FakeTool(
+            definition=ToolDefinition(
+                name="large_result",
+                description="返回大型结果。",
+                parameters={"type": "object", "properties": {}},
+            ),
+            result={"content": "甲" * 1_000},
+        )
+    )
+    registry.register(ReadArtifactTool(store))
+    model = ArtifactReadingModel()
+    context_manager = ContextManager(
+        ContextBudget(
+            context_window_tokens=10_000,
+            max_output_tokens=1,
+            safety_margin_tokens=1,
+        ),
+        ToolResultBudgetCompactor(
+            store,
+            max_total_bytes=100,
+            minimum_artifact_bytes=20,
+        ),
+        HistorySummaryCompactor(RecordingSummarizer("不应生成历史摘要。")),
+    )
+
+    result = MinimalAgentLoop(
+        repository,
+        model,
+        registry,
+        conversation_repository,
+        context_manager=context_manager,
+    ).execute(start, occurred_at=timestamp)
+
+    assert len(model.artifact_refs) == 1
+    assert model.artifact_refs[0].startswith("tool-results/")
+    assert model.artifact_refs[0].endswith(".json")
+    assert (tmp_path / "artifacts" / model.artifact_refs[0]).is_file()
+    persisted_large_result = conversation_repository.get_messages(session.session_id)[2]
+    assert persisted_large_result.content == (
+        ToolResultBlock(
+            tool_use_id="toolu-large",
+            content={"content": "甲" * 1_000},
+        ),
+    )
+    assert result.response.text == "已读取 Artifact 的首段内容。"

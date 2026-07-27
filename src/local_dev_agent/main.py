@@ -44,6 +44,7 @@ from local_dev_agent.tools.builtin import (
     ListFilesTool,
     LoadSkillTool,
     ReadFileTool,
+    ReadArtifactTool,
     TaskTool,
     TodoWriteTool,
     WriteFileTool,
@@ -112,6 +113,9 @@ def create_tool_registry(
     registry.register(WriteFileTool(workspace))
     registry.register(EditFileTool(workspace))
     registry.register(CompactContextTool())
+    registry.register(
+        ReadArtifactTool(FileSystemToolResultArtifactStore(workspace / "var" / "artifacts"))
+    )
     registry.register(
         TodoWriteTool(JsonFileTodoRepository(workspace / "var" / "state" / "todos"))
     )
