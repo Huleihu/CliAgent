@@ -23,6 +23,7 @@ from .checkpoints import (
     select_safe_history_checkpoint_boundary,
     validate_history_summary_checkpoint,
 )
+from .checkpoint_ports import HistorySummaryCheckpointRepository
 from .manager import ContextBudgetExceededError, ContextManager, ContextPackage
 from .tool_result_budget import ToolResultBudgetCompactor, ToolResultBudgetResult
 from .structural_compaction import (
@@ -47,6 +48,7 @@ __all__ = [
     "HISTORY_SUMMARY_CHECKPOINT_SCHEMA_VERSION",
     "HistorySummaryCheckpoint",
     "HistorySummaryCheckpointSourceMismatchError",
+    "HistorySummaryCheckpointRepository",
     "ArtifactReadError",
     "ConversationSummarizer",
     "ConversationSnipCompactor",

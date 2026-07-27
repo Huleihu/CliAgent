@@ -57,7 +57,11 @@ class HistorySummaryCheckpoint:
 
         object.__setattr__(self, "session_id", _require_nonempty_text("session_id", self.session_id))
         _require_positive_integer("covered_message_count", self.covered_message_count)
-        if self.schema_version != HISTORY_SUMMARY_CHECKPOINT_SCHEMA_VERSION:
+        if (
+            isinstance(self.schema_version, bool)
+            or not isinstance(self.schema_version, int)
+            or self.schema_version != HISTORY_SUMMARY_CHECKPOINT_SCHEMA_VERSION
+        ):
             raise ValueError("历史摘要检查点版本不受支持。")
         if not _is_sha256_checksum(self.source_checksum):
             raise ValueError("字段“source_checksum”必须是 SHA-256 校验和。")
