@@ -31,6 +31,7 @@
 - 已完成 `learnClaude/s07_skill_loading` 的第 3 个教学式小步：新增有界技能目录提示格式化器，仅输出排序后的技能名称和描述，绝不输出正文；新增只读 `load_skill` 工具，按精确名称从启动快照返回完整正文和受控相对技能目录，并复用现有参数校验、Hook、权限和结构化工具结果链路。当前尚未修改 CLI 装配。
 - 已完成 `learnClaude/s07_skill_loading` 的第 4 个教学式小步：CLI 启动时从工作区加载一次技能目录快照，将 `load_skill` 仅注册到父工具目录，并把仅含目录元数据的技能提示与既有 Todo、委派提示动态组合；父模型调用后完整正文经既有工具结果链路回填至下一轮对话，子 Agent 白名单仍不包含 `load_skill`，不继承技能正文。
 - 已完成当前范围的 `learnClaude/s07_skill_loading` 闭环：受控 `skills/<目录>/SKILL.md` 扫描、YAML 元数据、稳定快照、目录提示、父侧按需 `load_skill` 回填与子 Agent 能力隔离均已实现；当前刻意不包含多来源或动态 Skill、插件/MCP Skill、`allowed-tools`、条件路径激活、`context: fork`、运行中刷新或 S8 上下文压缩。
+- 已完成 `learnClaude/s08_context_compact` 的第 1 个教学式小步：新增独立 `local_dev_agent.context` 包，定义不可变 `ContextBudget`、`ContextInputSnapshot` 与 `ContextBudgetReport`，并以可替换的 `ContextBudgetEstimator` 隔离估算策略；默认 `Utf8ByteContextBudgetEstimator` 按稳定 JSON 序列化后的 UTF-8 字节数近似 token，分别报告系统提示、工具声明和消息用量。当前尚未接入 Agent Loop、修改 Transcript 或执行任何压缩。
 - 使用 Conda 环境 `local-dev-agent`（Python 3.13）。
 
 ## 已完成
@@ -165,9 +166,9 @@
 - `anthropic`、`python-dotenv`、`pytest` 可在 Conda 环境中导入。
 - `ruff` 可运行。
 - 已人工核对 `TDD.md` 与 `AGENT_REQUIREMENTS_CHECKLIST.txt` 的 S01–S30 覆盖关系；本次仅修改文档，未运行代码测试。
-- `python -m pytest`：295 passed（覆盖状态机、JSON 文件状态仓储、会话 Transcript、最小内部事件协议、Runtime 输入编排、内容块模型协议、有界 Agent Loop、统一 logging、受控工具框架、DeepSeek Provider、多轮工具调用闭环、最小交互式启动入口、读写编辑文件工具、Hook 核心闭环、S3 简单权限策略、S5 待办领域契约、JSON Todo 仓储、TodoWrite 工具闭环、Todo 规划系统提示与临时 reminder、完整 S6 同步子 Agent 闭环，以及完整 S7 Skill Loading 闭环）。
+- `python -m pytest`：307 passed（覆盖状态机、JSON 文件状态仓储、会话 Transcript、最小内部事件协议、Runtime 输入编排、内容块模型协议、有界 Agent Loop、统一 logging、受控工具框架、DeepSeek Provider、多轮工具调用闭环、最小交互式启动入口、读写编辑文件工具、Hook 核心闭环、S3 简单权限策略、S5 待办领域契约、JSON Todo 仓储、TodoWrite 工具闭环、Todo 规划系统提示与临时 reminder、完整 S6 同步子 Agent 闭环、完整 S7 Skill Loading 闭环，以及 S8 上下文预算契约）。
 - `python -m ruff check src tests`：通过。
 
 ## 下一步
 
-- 由用户检查完整 S7 Skill Loading 闭环；若按 learnClaude 路线继续，下一步进入 S8 Context Compact，先单独设计上下文预算、压缩触发条件、不可变输入快照和工具结果替代边界，避免在 Agent Loop 中直接散落截断逻辑。
+- 由用户检查 S8 Context Compact 的第 1 步；确认后进入第 2 步，实现大工具结果的 Artifact 化：仅在派生的模型请求视图中将超预算工具结果替换为工件引用与预览，完整消息历史与 Transcript 保持不变。
