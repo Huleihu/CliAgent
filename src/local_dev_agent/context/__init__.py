@@ -17,14 +17,17 @@ from .structural_compaction import (
     ConversationSnipCompactor,
     ToolResultMicroCompactor,
 )
+from .summary import ConversationSummarizer, HistorySummaryCompactor
 
 __all__ = [
     "ContextBudget",
     "ContextBudgetEstimator",
     "ContextBudgetReport",
     "ContextInputSnapshot",
+    "ConversationSummarizer",
     "ConversationSnipCompactor",
     "FileSystemToolResultArtifactStore",
+    "HistorySummaryCompactor",
     "ToolResultArtifact",
     "ToolResultArtifactStore",
     "ToolResultBudgetCompactor",
