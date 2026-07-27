@@ -126,6 +126,39 @@ def test_context_manager_summarizes_only_when_preprocessors_leave_an_over_budget
     assert snapshot.messages[0].content == (TextBlock("甲" * 500),)
 
 
+def test_context_manager_can_force_history_compaction_within_budget(tmp_path: Path) -> None:
+    snapshot = ContextInputSnapshot(
+        session_id="session-1",
+        run_id="run-1",
+        messages=(
+            ModelMessage(
+                role=MessageRole.USER,
+                content=(TextBlock("检查当前状态。"),),
+            ),
+        ),
+    )
+    summarizer = RecordingSummarizer("当前目标：继续检查。")
+    manager = _manager(
+        tmp_path,
+        budget=ContextBudget(
+            context_window_tokens=10_000,
+            max_output_tokens=1,
+            safety_margin_tokens=1,
+        ),
+        summarizer=summarizer,
+        max_total_bytes=10_000,
+    )
+
+    package = manager.prepare(snapshot, force_history_compaction=True)
+
+    assert package.history_compacted
+    assert summarizer.snapshots == [snapshot]
+    assert package.snapshot.messages[0].content == (
+        TextBlock("[已压缩的历史摘要]\n\n当前目标：继续检查。"),
+    )
+    assert snapshot.messages[0].content == (TextBlock("检查当前状态。"),)
+
+
 def test_context_manager_rejects_a_summary_that_still_exceeds_budget(tmp_path: Path) -> None:
     snapshot = ContextInputSnapshot(
         session_id="session-1",

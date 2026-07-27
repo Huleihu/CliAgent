@@ -26,9 +26,11 @@ from local_dev_agent.hooks import (
     StopContext,
     UserPromptSubmitContext,
 )
+from local_dev_agent.models import ModelContextWindowExceededError
 from local_dev_agent.models.fake import FakeModel
 from local_dev_agent.models.ports import (
     MessageRole,
+    ModelMessage,
     ModelRequest,
     ModelResponse,
     StopReason,
@@ -60,7 +62,7 @@ from local_dev_agent.todos import (
 class ScriptedModel:
     """按预设顺序返回响应，用于验证跨多轮的 Agent Loop。"""
 
-    def __init__(self, responses: tuple[ModelResponse, ...]) -> None:
+    def __init__(self, responses: tuple[ModelResponse | Exception, ...]) -> None:
         self._responses = list(responses)
         self.requests: list[ModelRequest] = []
 
@@ -70,7 +72,22 @@ class ScriptedModel:
         self.requests.append(request)
         if not self._responses:
             raise AssertionError("测试模型没有更多预设响应。")
-        return self._responses.pop(0)
+        response = self._responses.pop(0)
+        if isinstance(response, Exception):
+            raise response
+        return response
+
+
+class RecordingSummarizer:
+    """记录 Runtime 请求的应急摘要来源，并返回稳定摘要。"""
+
+    def __init__(self, summary: str) -> None:
+        self._summary = summary
+        self.snapshots = []
+
+    def summarize(self, snapshot) -> str:
+        self.snapshots.append(snapshot)
+        return self._summary
 
 
 class BlockingPreToolHook:
@@ -1137,3 +1154,168 @@ def test_minimal_agent_loop_uses_an_artifact_view_without_rewriting_tool_transcr
     assert isinstance(persisted_tool_result, ToolResultBlock)
     assert persisted_tool_result.content == {"content": "甲" * 1_000}
     assert result.response.text == "已读取大型日志。"
+
+
+def test_minimal_agent_loop_retries_once_with_an_emergency_summary_view(
+    tmp_path,
+) -> None:
+    timestamp = datetime(2026, 7, 27, 10, 0, tzinfo=timezone.utc)
+    repository = JsonFileStateRepository(tmp_path / "state")
+    conversation_repository = JsonFileConversationRepository(tmp_path / "state")
+    session = SessionState.create(
+        session_id="session-1",
+        tenant_id="tenant-1",
+        user_id="user-1",
+        project_id="project-1",
+        created_at=timestamp,
+    )
+    repository.save_session(session)
+    start = UserInputRuntimeService(repository).handle(
+        UserInputEvent.create(
+            session_id=session.session_id,
+            content="甲" * 500,
+            occurred_at=timestamp,
+        )
+    )
+    model = ScriptedModel(
+        (
+            ModelContextWindowExceededError("Provider 拒绝原始上下文。"),
+            ModelResponse.text_completion("已在压缩上下文后完成。"),
+        )
+    )
+    summarizer = RecordingSummarizer("当前目标：继续处理用户请求。")
+    context_manager = ContextManager(
+        ContextBudget(
+            context_window_tokens=10_000,
+            max_output_tokens=1,
+            safety_margin_tokens=1,
+        ),
+        ToolResultBudgetCompactor(
+            FileSystemToolResultArtifactStore(tmp_path / "artifacts")
+        ),
+        HistorySummaryCompactor(summarizer),
+    )
+
+    result = MinimalAgentLoop(
+        repository,
+        model,
+        conversation_repository=conversation_repository,
+        context_manager=context_manager,
+    ).execute(start, occurred_at=timestamp)
+
+    assert len(model.requests) == 2
+    assert model.requests[0].conversation[0].content == (TextBlock("甲" * 500),)
+    assert model.requests[1].conversation[0].content == (
+        TextBlock("[已压缩的历史摘要]\n\n当前目标：继续处理用户请求。"),
+    )
+    assert len(summarizer.snapshots) == 1
+    assert conversation_repository.get_messages(session.session_id) == (
+        ModelMessage(
+            role=MessageRole.USER,
+            content=(TextBlock("甲" * 500),),
+        ),
+        ModelMessage(
+            role=MessageRole.ASSISTANT,
+            content=(TextBlock("已在压缩上下文后完成。"),),
+        ),
+    )
+    assert result.response.text == "已在压缩上下文后完成。"
+
+
+def test_minimal_agent_loop_stops_after_the_single_emergency_retry(tmp_path) -> None:
+    timestamp = datetime(2026, 7, 27, 10, 15, tzinfo=timezone.utc)
+    repository = JsonFileStateRepository(tmp_path / "state")
+    conversation_repository = JsonFileConversationRepository(tmp_path / "state")
+    session = SessionState.create(
+        session_id="session-1",
+        tenant_id="tenant-1",
+        user_id="user-1",
+        project_id="project-1",
+        created_at=timestamp,
+    )
+    repository.save_session(session)
+    start = UserInputRuntimeService(repository).handle(
+        UserInputEvent.create(
+            session_id=session.session_id,
+            content="甲" * 500,
+            occurred_at=timestamp,
+        )
+    )
+    model = ScriptedModel(
+        (
+            ModelContextWindowExceededError("首次超限。"),
+            ModelContextWindowExceededError("应急重试仍超限。"),
+        )
+    )
+    context_manager = ContextManager(
+        ContextBudget(
+            context_window_tokens=10_000,
+            max_output_tokens=1,
+            safety_margin_tokens=1,
+        ),
+        ToolResultBudgetCompactor(
+            FileSystemToolResultArtifactStore(tmp_path / "artifacts")
+        ),
+        HistorySummaryCompactor(RecordingSummarizer("当前目标：继续处理用户请求。")),
+    )
+
+    with pytest.raises(ModelContextWindowExceededError, match="应急重试仍超限"):
+        MinimalAgentLoop(
+            repository,
+            model,
+            conversation_repository=conversation_repository,
+            context_manager=context_manager,
+        ).execute(start, occurred_at=timestamp)
+
+    assert len(model.requests) == 2
+    assert [message.role for message in conversation_repository.get_messages(session.session_id)] == [
+        MessageRole.USER
+    ]
+
+
+def test_minimal_agent_loop_does_not_retry_non_context_provider_errors(tmp_path) -> None:
+    timestamp = datetime(2026, 7, 27, 10, 30, tzinfo=timezone.utc)
+    repository = JsonFileStateRepository(tmp_path / "state")
+    conversation_repository = JsonFileConversationRepository(tmp_path / "state")
+    session = SessionState.create(
+        session_id="session-1",
+        tenant_id="tenant-1",
+        user_id="user-1",
+        project_id="project-1",
+        created_at=timestamp,
+    )
+    repository.save_session(session)
+    start = UserInputRuntimeService(repository).handle(
+        UserInputEvent.create(
+            session_id=session.session_id,
+            content="检查项目状态。",
+            occurred_at=timestamp,
+        )
+    )
+    model = ScriptedModel((RuntimeError("网络不可用"),))
+    summarizer = RecordingSummarizer("不应生成摘要。")
+    context_manager = ContextManager(
+        ContextBudget(
+            context_window_tokens=10_000,
+            max_output_tokens=1,
+            safety_margin_tokens=1,
+        ),
+        ToolResultBudgetCompactor(
+            FileSystemToolResultArtifactStore(tmp_path / "artifacts")
+        ),
+        HistorySummaryCompactor(summarizer),
+    )
+
+    with pytest.raises(RuntimeError, match="网络不可用"):
+        MinimalAgentLoop(
+            repository,
+            model,
+            conversation_repository=conversation_repository,
+            context_manager=context_manager,
+        ).execute(start, occurred_at=timestamp)
+
+    assert len(model.requests) == 1
+    assert summarizer.snapshots == []
+    assert [message.role for message in conversation_repository.get_messages(session.session_id)] == [
+        MessageRole.USER
+    ]

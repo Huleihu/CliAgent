@@ -79,16 +79,23 @@ class ContextManager:
         self._snip_compactor = snip_compactor or ConversationSnipCompactor()
         self._micro_compactor = micro_compactor or ToolResultMicroCompactor()
 
-    def prepare(self, snapshot: ContextInputSnapshot) -> ContextPackage:
+    def prepare(
+        self,
+        snapshot: ContextInputSnapshot,
+        *,
+        force_history_compaction: bool = False,
+    ) -> ContextPackage:
         """按 Artifact 化、L1、L2、预算复算、L4 的顺序装配请求视图。"""
 
         if not isinstance(snapshot, ContextInputSnapshot):
             raise ValueError("字段“snapshot”必须是 ContextInputSnapshot 对象。")
+        if not isinstance(force_history_compaction, bool):
+            raise ValueError("字段“force_history_compaction”必须是布尔值。")
         budget_result = self._tool_result_budget_compactor.compact(snapshot)
         prepared_snapshot = self._snip_compactor.compact(budget_result.snapshot)
         prepared_snapshot = self._micro_compactor.compact(prepared_snapshot)
         budget_report = self._estimator.estimate(prepared_snapshot, self._budget)
-        history_compacted = budget_report.exceeds_budget
+        history_compacted = force_history_compaction or budget_report.exceeds_budget
         if history_compacted:
             prepared_snapshot = self._history_summary_compactor.compact(prepared_snapshot)
             budget_report = self._estimator.estimate(prepared_snapshot, self._budget)

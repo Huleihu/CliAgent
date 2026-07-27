@@ -25,6 +25,7 @@ from local_dev_agent.hooks import (
 from local_dev_agent.models import (
     MessageRole,
     ModelClient,
+    ModelContextWindowExceededError,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -336,35 +337,62 @@ class MinimalAgentLoop:
         logger.info("开始模型调用。", extra=log_context)
         system_prompt = self._request_system_prompt()
         tools = self._registry.list_definitions()
-        messages = conversation
-        if self._context_manager is not None:
-            context_package = self._context_manager.prepare(
-                ContextInputSnapshot(
-                    session_id=session_id,
-                    run_id=run_id,
-                    messages=conversation,
-                    tools=tools,
-                    system_prompt=system_prompt,
-                )
-            )
-            messages = context_package.snapshot.messages
-            tools = context_package.snapshot.tools
-            system_prompt = context_package.snapshot.system_prompt
+        snapshot = ContextInputSnapshot(
+            session_id=session_id,
+            run_id=run_id,
+            messages=conversation,
+            tools=tools,
+            system_prompt=system_prompt,
+        )
         try:
-            response = self._model.generate(
-                ModelRequest.from_messages(
-                    session_id=session_id,
-                    run_id=run_id,
-                    messages=messages,
-                    tools=tools,
-                    system_prompt=system_prompt,
+            response = self._model.generate(self._build_model_request(snapshot))
+        except ModelContextWindowExceededError:
+            if self._context_manager is None:
+                logger.error("模型上下文超限，且未配置应急压缩。", exc_info=True, extra=log_context)
+                raise
+            logger.warning("模型上下文超限，开始一次应急压缩并重试。", extra=log_context)
+            try:
+                response = self._model.generate(
+                    self._build_model_request(
+                        snapshot,
+                        force_history_compaction=True,
+                    )
                 )
-            )
+            except Exception:
+                logger.error("模型上下文超限后的应急重试失败。", exc_info=True, extra=log_context)
+                raise
         except Exception:
             logger.error("模型调用失败。", exc_info=True, extra=log_context)
             raise
         logger.info("模型调用完成。", extra=log_context)
         return response
+
+    def _build_model_request(
+        self,
+        snapshot: ContextInputSnapshot,
+        *,
+        force_history_compaction: bool = False,
+    ) -> ModelRequest:
+        """仅从完整内存历史派生 Provider 请求，避免重试污染 Conversation Transcript。"""
+
+        messages = snapshot.messages
+        tools = snapshot.tools
+        system_prompt = snapshot.system_prompt
+        if self._context_manager is not None:
+            context_package = self._context_manager.prepare(
+                snapshot,
+                force_history_compaction=force_history_compaction,
+            )
+            messages = context_package.snapshot.messages
+            tools = context_package.snapshot.tools
+            system_prompt = context_package.snapshot.system_prompt
+        return ModelRequest.from_messages(
+            session_id=snapshot.session_id,
+            run_id=snapshot.run_id,
+            messages=messages,
+            tools=tools,
+            system_prompt=system_prompt,
+        )
 
     def _request_system_prompt(self) -> str | None:
         """合并稳定系统提示与一次性待办提醒，不写入会话消息。"""
