@@ -36,6 +36,7 @@
 - 已完成 `learnClaude/s08_context_compact` 的第 3 个教学式小步：新增纯派生的 `ConversationSnipCompactor` 与 `ToolResultMicroCompactor`；前者裁剪过长消息历史的中段并以用户文本占位，后者仅将较早且较大的工具结果替换为可重新获取的占位提示。两个转换器均保留相邻的 `tool_use`/`tool_result` 配对、最近工具结果、原始输入快照与 Conversation Transcript，当前尚未接入 Agent Loop 或调用摘要模型。
 - 已完成 `learnClaude/s08_context_compact` 的第 4 个教学式小步：新增 `ConversationSummarizer` 端口、稳定的摘要要求与 `HistorySummaryCompactor`；压缩器委托摘要器生成非空纯文本摘要，并仅在新的 `ContextInputSnapshot` 中以一条摘要用户消息替换完整历史，同时保留 Session、Run、系统提示和工具目录。当前尚未实现真实模型摘要适配器、自动预算触发或 Agent Loop 接入。
 - 已完成 `learnClaude/s08_context_compact` 的第 5 个教学式小步：新增无工具的 `ModelConversationSummarizer`、`ContextManager` 与不可变 `ContextPackage`；模型调用前按 `Artifact 化 → L1 → L2 → 预算复算 → L4 摘要` 顺序组装派生请求视图，摘要后仍超预算会以中文错误拒绝请求。CLI 组合根注入默认上下文预算和 Artifact 根目录；`MinimalAgentLoop` 仅将派生视图发送给模型，原始 Conversation Transcript 继续追加完整消息。修正了中文 UTF-8 预览可能扩大上下文的问题，Artifact 化现在会自动缩短预览，确保引用块小于原结果。
+- 已完成 S8 Provider 上下文超限异常边界的小步：新增 Provider 无关的 `ModelContextWindowExceededError`；DeepSeek Anthropic 兼容适配器仅在 HTTP `413`、结构化 `request_too_large` 或兼容代码 `prompt_too_long` 时映射该异常，并保留原始 SDK 异常作为原因。普通 `400`、认证、限流、服务端、网络和仅在自然语言消息中出现的关键词仍统一包装为既有 `DeepSeekModelError`；本步不改变 Runtime、重试、ContextManager 或 Conversation Transcript。
 - 使用 Conda 环境 `local-dev-agent`（Python 3.13）。
 
 ## 已完成
@@ -170,9 +171,9 @@
 - `anthropic`、`python-dotenv`、`pytest` 可在 Conda 环境中导入。
 - `ruff` 可运行。
 - 已人工核对 `TDD.md` 与 `AGENT_REQUIREMENTS_CHECKLIST.txt` 的 S01–S30 覆盖关系；本次仅修改文档，未运行代码测试。
-- `python -m pytest`：345 passed（覆盖状态机、JSON 文件状态仓储、会话 Transcript、最小内部事件协议、Runtime 输入编排、内容块模型协议、有界 Agent Loop、统一 logging、受控工具框架、DeepSeek Provider、多轮工具调用闭环、最小交互式启动入口、读写编辑文件工具、Hook 核心闭环、S3 简单权限策略、S5 待办领域契约、JSON Todo 仓储、TodoWrite 工具闭环、Todo 规划系统提示与临时 reminder、完整 S6 同步子 Agent 闭环、完整 S7 Skill Loading 闭环，以及 S8 上下文预算、Artifact 化、L1/L2 结构压缩、L4 摘要与模型调用前上下文装配）。
+- `python -m pytest`：356 passed（覆盖状态机、JSON 文件状态仓储、会话 Transcript、最小内部事件协议、Runtime 输入编排、内容块模型协议、有界 Agent Loop、统一 logging、受控工具框架、DeepSeek Provider、多轮工具调用闭环、最小交互式启动入口、读写编辑文件工具、Hook 核心闭环、S3 简单权限策略、S5 待办领域契约、JSON Todo 仓储、TodoWrite 工具闭环、Todo 规划系统提示与临时 reminder、完整 S6 同步子 Agent 闭环、完整 S7 Skill Loading 闭环，以及 S8 上下文预算、Artifact 化、L1/L2 结构压缩、L4 摘要、模型调用前上下文装配与 Provider 上下文超限异常边界）。
 - `python -m ruff check src tests`：通过。
 
 ## 下一步
 
-- 由用户检查 S8 Context Compact 的第 5 步；当前已完成自动上下文压缩主路径。若继续完善 S8，可进入独立小步：新增模型主动 `compact` 请求，以及 Provider 上下文超限后的单次应急压缩与受限重试；两者均不修改完整 Transcript。
+- 当前已完成自动上下文压缩主路径及 Provider 上下文超限异常边界。下一教学式小步可将该明确异常接入 Runtime：Provider 超限后仅强制压缩并重试一次，不重试其他 Provider 错误，也不修改完整 Transcript；随后再实现模型主动 `compact` 请求与受控 Artifact 分段读取。

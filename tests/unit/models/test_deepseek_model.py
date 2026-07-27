@@ -1,5 +1,7 @@
 from dataclasses import dataclass
 
+import anthropic
+import httpx
 import pytest
 
 from local_dev_agent.models import (
@@ -7,6 +9,7 @@ from local_dev_agent.models import (
     DeepSeekConfigurationError,
     DeepSeekModelError,
     DeepSeekSettings,
+    ModelContextWindowExceededError,
 )
 from local_dev_agent.models.ports import (
     MessageRole,
@@ -74,6 +77,21 @@ class FakeAnthropicClient:
 
     def __init__(self, response: FakeMessage | Exception) -> None:
         self.messages = FakeMessages(response)
+
+
+class FakeProviderError(RuntimeError):
+    """模拟兼容 Provider 已解析的状态码与结构化错误体。"""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        status_code: int | None = None,
+        body: object | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.status_code = status_code
+        self.body = body
 
 
 def _settings() -> DeepSeekSettings:
@@ -314,6 +332,102 @@ def test_model_client_wraps_provider_failure_in_chinese_error() -> None:
 
     with pytest.raises(DeepSeekModelError, match="DeepSeek 模型调用失败"):
         model.generate(_request())
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        FakeProviderError("请求体过大", status_code=413),
+        FakeProviderError(
+            "兼容端点返回结构化超限代码",
+            status_code=400,
+            body={"error": {"type": "request_too_large"}},
+        ),
+        FakeProviderError(
+            "兼容端点返回结构化超限代码",
+            status_code=400,
+            body={"error": {"code": "prompt_too_long"}},
+        ),
+        anthropic.RequestTooLargeError(
+            "请求体过大",
+            response=httpx.Response(
+                413,
+                request=httpx.Request(
+                    "POST",
+                    "https://api.deepseek.com/anthropic/messages",
+                ),
+            ),
+            body={"error": {"type": "request_too_large"}},
+        ),
+    ],
+)
+def test_model_client_maps_only_explicit_context_limit_signals(
+    error: Exception,
+) -> None:
+    model = DeepSeekAnthropicModelClient(
+        _settings(),
+        client=FakeAnthropicClient(error),
+    )
+
+    with pytest.raises(ModelContextWindowExceededError) as error_info:
+        model.generate(_request())
+
+    assert error_info.value.__cause__ is error
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        FakeProviderError(
+            "请求格式错误",
+            status_code=400,
+            body={"error": {"type": "invalid_request_error"}},
+        ),
+        FakeProviderError(
+            "认证失败",
+            status_code=401,
+            body={"error": {"type": "authentication_error"}},
+        ),
+        FakeProviderError(
+            "速率限制",
+            status_code=429,
+            body={"error": {"type": "rate_limit_error"}},
+        ),
+        FakeProviderError(
+            "服务端错误",
+            status_code=500,
+            body={"error": {"type": "api_error"}},
+        ),
+        FakeProviderError("文本中碰巧出现 prompt_too_long"),
+        anthropic.AuthenticationError(
+            "认证失败",
+            response=httpx.Response(
+                401,
+                request=httpx.Request(
+                    "POST",
+                    "https://api.deepseek.com/anthropic/messages",
+                ),
+            ),
+            body={"error": {"type": "authentication_error"}},
+        ),
+        anthropic.APIConnectionError(
+            message="网络不可用",
+            request=httpx.Request("POST", "https://api.deepseek.com/anthropic/messages"),
+        ),
+    ],
+)
+def test_model_client_keeps_non_context_limit_provider_failures_as_deepseek_error(
+    error: Exception,
+) -> None:
+    model = DeepSeekAnthropicModelClient(
+        _settings(),
+        client=FakeAnthropicClient(error),
+    )
+
+    with pytest.raises(DeepSeekModelError) as error_info:
+        model.generate(_request())
+
+    assert error_info.value.__cause__ is error
 
 
 def test_model_client_rejects_an_unknown_stop_reason() -> None:

@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from typing import Any
 
 import anthropic
 
 from .deepseek_settings import DeepSeekSettings
+from .errors import ModelContextWindowExceededError
 from .ports import (
     ModelContentBlock,
     ModelMessage,
@@ -27,6 +29,9 @@ class DeepSeekModelError(RuntimeError):
 
 class DeepSeekAnthropicModelClient:
     """使用 DeepSeek 的 Anthropic 兼容接口实现 ModelClient。"""
+
+    _CONTEXT_LIMIT_ERROR_CODES = frozenset({"prompt_too_long", "request_too_large"})
+    """兼容端点可能使用的、可由结构化错误体确认的超限代码。"""
 
     def __init__(self, settings: DeepSeekSettings, *, client: Any | None = None) -> None:
         self._settings = settings
@@ -56,9 +61,52 @@ class DeepSeekAnthropicModelClient:
         try:
             response = self._client.messages.create(**request_parameters)
         except Exception as error:
+            if self._is_context_window_exceeded(error):
+                raise ModelContextWindowExceededError(
+                    "DeepSeek 明确拒绝了超过上下文或请求大小限制的输入。"
+                ) from error
             raise DeepSeekModelError("DeepSeek 模型调用失败。") from error
 
         return self._map_response(response)
+
+    @classmethod
+    def _is_context_window_exceeded(cls, error: Exception) -> bool:
+        """仅接受明确状态或结构化代码，避免把普通 Provider 故障误判为超限。"""
+
+        if cls._status_code(error) == 413:
+            return True
+        return cls._structured_error_code(error) in cls._CONTEXT_LIMIT_ERROR_CODES
+
+    @staticmethod
+    def _status_code(error: Exception) -> int | None:
+        """兼容 SDK 直接暴露状态码或经 response 暴露状态码的两种形态。"""
+
+        candidates = (
+            getattr(error, "status_code", None),
+            getattr(getattr(error, "response", None), "status_code", None),
+        )
+        for value in candidates:
+            if isinstance(value, int) and not isinstance(value, bool):
+                return value
+        return None
+
+    @staticmethod
+    def _structured_error_code(error: Exception) -> str | None:
+        """只读取 SDK 已解析的错误体，不依赖可能变动的自然语言错误消息。"""
+
+        body = getattr(error, "body", None)
+        if not isinstance(body, Mapping):
+            return None
+        candidates: tuple[Mapping[object, object], ...] = (body,)
+        nested_error = body.get("error")
+        if isinstance(nested_error, Mapping):
+            candidates += (nested_error,)
+        for candidate in candidates:
+            for field_name in ("type", "code"):
+                value = candidate.get(field_name)
+                if isinstance(value, str):
+                    return value
+        return None
 
     @staticmethod
     def _map_tool_definition(tool: ToolDefinition) -> dict[str, object]:

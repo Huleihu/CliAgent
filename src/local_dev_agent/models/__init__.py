@@ -2,6 +2,7 @@
 
 from .deepseek import DeepSeekAnthropicModelClient, DeepSeekModelError
 from .deepseek_settings import DeepSeekConfigurationError, DeepSeekSettings
+from .errors import ModelContextWindowExceededError
 from .fake import FakeModel
 from .ports import (
     MessageRole,
@@ -22,6 +23,7 @@ __all__ = [
     "DeepSeekSettings",
     "FakeModel",
     "MessageRole",
+    "ModelContextWindowExceededError",
     "ModelClient",
     "ModelMessage",
     "ModelRequest",
