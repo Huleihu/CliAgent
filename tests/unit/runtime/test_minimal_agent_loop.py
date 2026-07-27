@@ -45,6 +45,7 @@ from local_dev_agent.storage.json_state_repository import JsonFileStateRepositor
 from local_dev_agent.storage.json_conversation_repository import JsonFileConversationRepository
 from local_dev_agent.tools import FakeTool, ToolDefinition, ToolRegistry
 from local_dev_agent.tools.builtin import (
+    CompactContextTool,
     EditFileTool,
     ListFilesTool,
     ReadFileTool,
@@ -1319,3 +1320,83 @@ def test_minimal_agent_loop_does_not_retry_non_context_provider_errors(tmp_path)
     assert [message.role for message in conversation_repository.get_messages(session.session_id)] == [
         MessageRole.USER
     ]
+
+
+def test_minimal_agent_loop_compacts_the_next_request_after_a_successful_compact_tool_call(
+    tmp_path,
+) -> None:
+    timestamp = datetime(2026, 7, 27, 10, 45, tzinfo=timezone.utc)
+    repository = JsonFileStateRepository(tmp_path / "state")
+    conversation_repository = JsonFileConversationRepository(tmp_path / "state")
+    session = SessionState.create(
+        session_id="session-1",
+        tenant_id="tenant-1",
+        user_id="user-1",
+        project_id="project-1",
+        created_at=timestamp,
+    )
+    repository.save_session(session)
+    start = UserInputRuntimeService(repository).handle(
+        UserInputEvent.create(
+            session_id=session.session_id,
+            content="先整理上下文再继续。",
+            occurred_at=timestamp,
+        )
+    )
+    model = ScriptedModel(
+        (
+            ModelResponse(
+                stop_reason=StopReason.TOOL_USE,
+                content=(
+                    ToolUseBlock(
+                        tool_use_id="toolu-compact",
+                        name="compact",
+                        input={},
+                    ),
+                ),
+            ),
+            ModelResponse.text_completion("已在压缩上下文后继续处理。"),
+        )
+    )
+    summarizer = RecordingSummarizer("当前目标：继续处理用户请求。")
+    context_manager = ContextManager(
+        ContextBudget(
+            context_window_tokens=10_000,
+            max_output_tokens=1,
+            safety_margin_tokens=1,
+        ),
+        ToolResultBudgetCompactor(
+            FileSystemToolResultArtifactStore(tmp_path / "artifacts")
+        ),
+        HistorySummaryCompactor(summarizer),
+    )
+    registry = ToolRegistry()
+    registry.register(CompactContextTool())
+
+    result = MinimalAgentLoop(
+        repository,
+        model,
+        registry,
+        conversation_repository,
+        context_manager=context_manager,
+    ).execute(start, occurred_at=timestamp)
+
+    assert [definition.name for definition in model.requests[0].tools] == ["compact"]
+    assert model.requests[1].conversation[0].content == (
+        TextBlock("[已压缩的历史摘要]\n\n当前目标：继续处理用户请求。"),
+    )
+    assert len(summarizer.snapshots) == 1
+    persisted_messages = conversation_repository.get_messages(session.session_id)
+    assert [message.role for message in persisted_messages] == [
+        MessageRole.USER,
+        MessageRole.ASSISTANT,
+        MessageRole.USER,
+        MessageRole.ASSISTANT,
+    ]
+    assert persisted_messages[2].content == (
+        ToolResultBlock(
+            tool_use_id="toolu-compact",
+            content={"requested": True},
+        ),
+    )
+    assert result.response.text == "已在压缩上下文后继续处理。"

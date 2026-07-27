@@ -39,6 +39,7 @@
 - 已完成 S8 Provider 上下文超限异常边界的小步：新增 Provider 无关的 `ModelContextWindowExceededError`；DeepSeek Anthropic 兼容适配器仅在 HTTP `413`、结构化 `request_too_large` 或兼容代码 `prompt_too_long` 时映射该异常，并保留原始 SDK 异常作为原因。普通 `400`、认证、限流、服务端、网络和仅在自然语言消息中出现的关键词仍统一包装为既有 `DeepSeekModelError`；本步不改变 Runtime、重试、ContextManager 或 Conversation Transcript。
 - 已完成 S8 Provider 超限后的单次应急压缩与重试小步：`ContextManager.prepare()` 新增可选强制 L4 历史压缩入口；`MinimalAgentLoop` 仅在正式模型请求收到 `ModelContextWindowExceededError` 后，从同一份完整内存历史重新装配强制压缩视图并重试一次。摘要或重试失败、重试后再次超限，以及网络、鉴权、限流等其他 Provider 错误均立即抛出而不继续重试；失败请求、摘要视图和重试视图均不写入 Conversation Transcript。
 - 已记录后续 S8 性能优化：可新增独立、版本化的历史摘要检查点，保留完整追加式 Transcript，同时记录摘要覆盖的消息边界和来源校验信息；后续请求可组合检查点摘要与新增尾部消息，避免长会话反复摘要完整历史。实现时需处理工具调用配对、检查点原子写入、来源不一致失效与周期性从完整历史重建，当前尚未实现。
+- 已完成 S8 模型主动 `compact` 请求小步：新增父侧无参数 `compact` 控制工具，它只通过标准工具链确认压缩意图，不持有 `ContextManager`，不读取或改写消息。`MinimalAgentLoop` 只在该工具成功执行后，将下一次正式模型调用标记为强制 L4 压缩；助手工具调用、确认结果和最终回复仍按原始内容追加到 Conversation Transcript，摘要视图不会持久化。CLI 父工具目录注册 `compact` 并注入使用说明，子 Agent 白名单保持隔离该能力。
 - 使用 Conda 环境 `local-dev-agent`（Python 3.13）。
 
 ## 已完成
@@ -173,9 +174,9 @@
 - `anthropic`、`python-dotenv`、`pytest` 可在 Conda 环境中导入。
 - `ruff` 可运行。
 - 已人工核对 `TDD.md` 与 `AGENT_REQUIREMENTS_CHECKLIST.txt` 的 S01–S30 覆盖关系；本次仅修改文档，未运行代码测试。
-- `python -m pytest`：360 passed（覆盖状态机、JSON 文件状态仓储、会话 Transcript、最小内部事件协议、Runtime 输入编排、内容块模型协议、有界 Agent Loop、统一 logging、受控工具框架、DeepSeek Provider、多轮工具调用闭环、最小交互式启动入口、读写编辑文件工具、Hook 核心闭环、S3 简单权限策略、S5 待办领域契约、JSON Todo 仓储、TodoWrite 工具闭环、Todo 规划系统提示与临时 reminder、完整 S6 同步子 Agent 闭环、完整 S7 Skill Loading 闭环，以及 S8 上下文预算、Artifact 化、L1/L2 结构压缩、L4 摘要、模型调用前上下文装配、Provider 上下文超限异常边界与单次应急压缩重试）。
+- `python -m pytest`：363 passed（覆盖状态机、JSON 文件状态仓储、会话 Transcript、最小内部事件协议、Runtime 输入编排、内容块模型协议、有界 Agent Loop、统一 logging、受控工具框架、DeepSeek Provider、多轮工具调用闭环、最小交互式启动入口、读写编辑文件工具、Hook 核心闭环、S3 简单权限策略、S5 待办领域契约、JSON Todo 仓储、TodoWrite 工具闭环、Todo 规划系统提示与临时 reminder、完整 S6 同步子 Agent 闭环、完整 S7 Skill Loading 闭环，以及 S8 上下文预算、Artifact 化、L1/L2 结构压缩、L4 摘要、模型调用前上下文装配、Provider 上下文超限异常边界、单次应急压缩重试与模型主动 `compact` 请求）。
 - `python -m ruff check src tests`：通过。
 
 ## 下一步
 
-- 当前已完成自动上下文压缩主路径、Provider 上下文超限异常边界和单次应急压缩重试。下一教学式小步可实现模型主动 `compact` 请求：工具只表达请求，Runtime 负责在下一次模型调用前强制压缩派生视图，完整 Transcript 保持追加式原始历史；随后实现受控 Artifact 分段读取。版本化历史摘要检查点作为独立后续 S8 性能优化，不与以上功能混合实现。
+- 当前已完成自动上下文压缩主路径、Provider 上下文超限异常边界、单次应急压缩重试和模型主动 `compact` 请求。下一教学式小步可实现受控 Artifact 分段读取：模型仅凭 `artifact_ref` 读取已保存的大工具结果片段，必须校验引用、限制输出并拒绝路径越界，不能暴露 Artifact 根目录为任意文件读取能力。版本化历史摘要检查点作为独立后续 S8 性能优化，不与以上功能混合实现。

@@ -39,6 +39,7 @@ from local_dev_agent.subagents import (
 from local_dev_agent.todos import JsonFileTodoRepository, TodoReminderPolicy
 from local_dev_agent.tools import ToolRegistry
 from local_dev_agent.tools.builtin import (
+    CompactContextTool,
     EditFileTool,
     ListFilesTool,
     LoadSkillTool,
@@ -58,9 +59,17 @@ TASK_DELEGATION_SYSTEM_PROMPT = """对于需要独立调查、实现或验证的
 
 task 只返回结构化结论和关联信息；收到结果后由你验收结论，并在需要时自行验证共享工作区中的副作用。简单任务不要委派。"""
 
+CONTEXT_COMPACTION_SYSTEM_PROMPT = """当当前历史已冗余或需要切换任务时，可调用 compact 请求 Runtime 在下一轮压缩上下文。
+
+compact 不会修改完整会话历史；不要把它当作文件或消息编辑工具。"""
+
 
 CLI_SYSTEM_PROMPT = (
-    TODO_PLANNING_SYSTEM_PROMPT + "\n\n" + TASK_DELEGATION_SYSTEM_PROMPT
+    TODO_PLANNING_SYSTEM_PROMPT
+    + "\n\n"
+    + TASK_DELEGATION_SYSTEM_PROMPT
+    + "\n\n"
+    + CONTEXT_COMPACTION_SYSTEM_PROMPT
 )
 
 CLI_CONTEXT_WINDOW_TOKENS = 128_000
@@ -102,6 +111,7 @@ def create_tool_registry(
     registry.register(ReadFileTool(workspace))
     registry.register(WriteFileTool(workspace))
     registry.register(EditFileTool(workspace))
+    registry.register(CompactContextTool())
     registry.register(
         TodoWriteTool(JsonFileTodoRepository(workspace / "var" / "state" / "todos"))
     )

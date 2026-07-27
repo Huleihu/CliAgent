@@ -13,6 +13,9 @@ from .errors import ToolValidationError
 DELEGATION_TOOL_TAG = "delegation"
 """标记会创建独立子运行的本地工具标签。"""
 
+CONTEXT_COMPACTION_TOOL_TAG = "context_compaction"
+"""标记仅由 Runtime 解释、请求下一轮压缩上下文的控制工具。"""
+
 
 def _require_text(field_name: str, value: str) -> None:
     if not isinstance(value, str) or not value.strip():

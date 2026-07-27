@@ -7,6 +7,7 @@ from .function_tool import FunctionTool
 from .ports import Tool
 from .registry import ToolRegistry
 from .schema import (
+    CONTEXT_COMPACTION_TOOL_TAG,
     DELEGATION_TOOL_TAG,
     ToolCallRequest,
     ToolCallResult,
@@ -17,6 +18,7 @@ from .schema import (
 __all__ = [
     "FakeTool",
     "FunctionTool",
+    "CONTEXT_COMPACTION_TOOL_TAG",
     "DELEGATION_TOOL_TAG",
     "Tool",
     "ToolCallRequest",

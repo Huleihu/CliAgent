@@ -38,6 +38,7 @@ from local_dev_agent.storage.ports import StateRepository
 from local_dev_agent.storage.conversation_ports import ConversationRepository
 from local_dev_agent.todos import TodoReminderPolicy
 from local_dev_agent.tools import (
+    CONTEXT_COMPACTION_TOOL_TAG,
     DELEGATION_TOOL_TAG,
     ToolCallRequest,
     ToolExecutionContext,
@@ -130,6 +131,7 @@ class MinimalAgentLoop:
             prompt=start.event.content,
             log_context=log_context,
         )
+        force_context_compaction_next = False
 
         for turn_number in range(1, self._max_turns + 1):
             response = self._generate(
@@ -137,7 +139,9 @@ class MinimalAgentLoop:
                 run_id=running_run.run_id,
                 conversation=tuple(conversation),
                 log_context=log_context,
+                force_history_compaction=force_context_compaction_next,
             )
+            force_context_compaction_next = False
             assistant_message = ModelMessage(
                 role=MessageRole.ASSISTANT,
                 content=response.content,
@@ -160,6 +164,10 @@ class MinimalAgentLoop:
                 )
                 completed_steps.extend(tool_steps)
                 self._record_todo_tool_turn(tool_blocks, tool_results)
+                force_context_compaction_next = self._requested_context_compaction(
+                    tool_blocks,
+                    tool_results,
+                )
                 tool_result_message = ModelMessage(
                     role=MessageRole.USER,
                     content=tool_results,
@@ -333,6 +341,7 @@ class MinimalAgentLoop:
         run_id: str,
         conversation: tuple[ModelMessage, ...],
         log_context: dict[str, str],
+        force_history_compaction: bool = False,
     ) -> ModelResponse:
         logger.info("开始模型调用。", extra=log_context)
         system_prompt = self._request_system_prompt()
@@ -345,7 +354,12 @@ class MinimalAgentLoop:
             system_prompt=system_prompt,
         )
         try:
-            response = self._model.generate(self._build_model_request(snapshot))
+            response = self._model.generate(
+                self._build_model_request(
+                    snapshot,
+                    force_history_compaction=force_history_compaction,
+                )
+            )
         except ModelContextWindowExceededError:
             if self._context_manager is None:
                 logger.error("模型上下文超限，且未配置应急压缩。", exc_info=True, extra=log_context)
@@ -393,6 +407,24 @@ class MinimalAgentLoop:
             tools=tools,
             system_prompt=system_prompt,
         )
+
+    def _requested_context_compaction(
+        self,
+        tool_blocks: tuple[ToolUseBlock, ...],
+        tool_results: tuple[ToolResultBlock, ...],
+    ) -> bool:
+        """只接受成功的本地控制工具结果，避免失败或伪造调用触发上下文变更。"""
+
+        for block, result in zip(tool_blocks, tool_results, strict=True):
+            if result.is_error:
+                continue
+            try:
+                tool = self._registry.get(block.name)
+            except ToolNotFoundError:
+                continue
+            if CONTEXT_COMPACTION_TOOL_TAG in tool.definition.tags:
+                return True
+        return False
 
     def _request_system_prompt(self) -> str | None:
         """合并稳定系统提示与一次性待办提醒，不写入会话消息。"""
