@@ -13,16 +13,22 @@ from .budget import (
     Utf8ByteContextBudgetEstimator,
 )
 from .tool_result_budget import ToolResultBudgetCompactor, ToolResultBudgetResult
+from .structural_compaction import (
+    ConversationSnipCompactor,
+    ToolResultMicroCompactor,
+)
 
 __all__ = [
     "ContextBudget",
     "ContextBudgetEstimator",
     "ContextBudgetReport",
     "ContextInputSnapshot",
+    "ConversationSnipCompactor",
     "FileSystemToolResultArtifactStore",
     "ToolResultArtifact",
     "ToolResultArtifactStore",
     "ToolResultBudgetCompactor",
     "ToolResultBudgetResult",
+    "ToolResultMicroCompactor",
     "Utf8ByteContextBudgetEstimator",
 ]
