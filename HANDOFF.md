@@ -41,6 +41,7 @@
 - 已记录后续 S8 性能优化：可新增独立、版本化的历史摘要检查点，保留完整追加式 Transcript，同时记录摘要覆盖的消息边界和来源校验信息；后续请求可组合检查点摘要与新增尾部消息，避免长会话反复摘要完整历史。实现时需处理工具调用配对、检查点原子写入、来源不一致失效与周期性从完整历史重建，当前尚未实现。
 - 已完成 S8 模型主动 `compact` 请求小步：新增父侧无参数 `compact` 控制工具，它只通过标准工具链确认压缩意图，不持有 `ContextManager`，不读取或改写消息。`MinimalAgentLoop` 只在该工具成功执行后，将下一次正式模型调用标记为强制 L4 压缩；助手工具调用、确认结果和最终回复仍按原始内容追加到 Conversation Transcript，摘要视图不会持久化。CLI 父工具目录注册 `compact` 并注入使用说明，子 Agent 白名单保持隔离该能力。
 - 已完成 S8 受控 Artifact 分段读取小步：Artifact 存储层新增严格 `artifact_ref` 分页读取，只接受 `tool-results/<SHA-256>.json` 引用，并在内部校验解析后根目录边界、普通文件、文件摘要、UTF-8 JSON 与版本化工具结果封装；`read_artifact` 只返回有限的原始 `content` JSON 文本片段、偏移和截断信息，绝不暴露 Artifact 根目录或任意文件读取能力。CLI 父工具目录注册该工具，子 Agent 白名单保持隔离；大型工具结果占位提示现引导模型按需读取 Artifact。
+- 已完成 S8 版本化历史摘要检查点的第 1 个教学式小步：新增独立 `local_dev_agent.context.checkpoints` 纯领域契约，以不可变 `HistorySummaryCheckpoint` 保存会话标识、已覆盖消息数、摘要、版本与稳定 SHA-256 来源校验和；校验和绑定会话和原始消息前缀。新增安全边界选择与验证：匹配的相邻 `tool_use`/`tool_result` 不会被检查点边界拆开，会话不匹配、覆盖越界、拆分边界或来源校验和不一致均以中文异常拒绝。当前尚未实现检查点文件仓储、摘要视图组合或接入 `ContextManager`/Runtime。
 - 使用 Conda 环境 `local-dev-agent`（Python 3.13）。
 
 ## 已完成
@@ -175,9 +176,9 @@
 - `anthropic`、`python-dotenv`、`pytest` 可在 Conda 环境中导入。
 - `ruff` 可运行。
 - 已人工核对 `TDD.md` 与 `AGENT_REQUIREMENTS_CHECKLIST.txt` 的 S01–S30 覆盖关系；本次仅修改文档，未运行代码测试。
-- `python -m pytest`：378 passed（覆盖状态机、JSON 文件状态仓储、会话 Transcript、最小内部事件协议、Runtime 输入编排、内容块模型协议、有界 Agent Loop、统一 logging、受控工具框架、DeepSeek Provider、多轮工具调用闭环、最小交互式启动入口、读写编辑文件工具、Hook 核心闭环、S3 简单权限策略、S5 待办领域契约、JSON Todo 仓储、TodoWrite 工具闭环、Todo 规划系统提示与临时 reminder、完整 S6 同步子 Agent 闭环、完整 S7 Skill Loading 闭环，以及 S8 上下文预算、Artifact 化、L1/L2 结构压缩、L4 摘要、模型调用前上下文装配、Provider 上下文超限异常边界、单次应急压缩重试、模型主动 `compact` 请求与受控 Artifact 分段读取）。
+- `python -m pytest`：394 passed（覆盖状态机、JSON 文件状态仓储、会话 Transcript、最小内部事件协议、Runtime 输入编排、内容块模型协议、有界 Agent Loop、统一 logging、受控工具框架、DeepSeek Provider、多轮工具调用闭环、最小交互式启动入口、读写编辑文件工具、Hook 核心闭环、S3 简单权限策略、S5 待办领域契约、JSON Todo 仓储、TodoWrite 工具闭环、Todo 规划系统提示与临时 reminder、完整 S6 同步子 Agent 闭环、完整 S7 Skill Loading 闭环，以及 S8 上下文预算、Artifact 化、L1/L2 结构压缩、L4 摘要、模型调用前上下文装配、Provider 上下文超限异常边界、单次应急压缩重试、模型主动 `compact` 请求、受控 Artifact 分段读取与版本化历史摘要检查点契约）。
 - `python -m ruff check src tests`：通过。
 
 ## 下一步
 
-- 已完成当前范围的 S8 Context Compact 补强闭环：自动压缩主路径、模型主动 `compact` 请求、Provider 明确超限后的单次应急压缩重试，以及受控 Artifact 分段读取均已实现；完整 Conversation Transcript 始终保持追加式原始历史。下一步若继续优化 S8，可独立实现版本化历史摘要检查点，以避免长会话反复摘要完整历史。
+- 已完成 S8 版本化历史摘要检查点的领域契约小步；下一步实现独立、版本化且原子写入的检查点 JSON 仓储，再接入摘要视图与 `ContextManager`。完整 Conversation Transcript 始终保持追加式原始历史。
