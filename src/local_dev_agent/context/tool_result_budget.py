@@ -127,7 +127,10 @@ class ToolResultBudgetCompactor:
                 content=block.content,
                 is_error=block.is_error,
             )
-            replacement_blocks[block_index] = self._create_reference_block(block, artifact)
+            replacement_block = self._create_reference_block(block, artifact)
+            if replacement_block is None:
+                continue
+            replacement_blocks[block_index] = replacement_block
             artifacts.append(artifact)
             remaining_total_bytes = sum(
                 self._content_size_bytes(candidate)
@@ -164,18 +167,27 @@ class ToolResultBudgetCompactor:
         self,
         block: ToolResultBlock,
         artifact: ToolResultArtifact,
-    ) -> ToolResultBlock:
+    ) -> ToolResultBlock | None:
+        """逐步缩短预览，确保 Artifact 引用块确实能释放上下文预算。"""
+
         serialized_content = self._serialize_content(block)
         preview = serialized_content[: self._preview_max_characters]
-        return ToolResultBlock(
-            tool_use_id=block.tool_use_id,
-            is_error=block.is_error,
-            content={
-                "artifact_ref": artifact.relative_path,
-                "preview": preview,
-                "notice": "完整结果已保存；如需完整内容，请重新执行该工具调用。",
-            },
-        )
+        original_size_bytes = self._content_size_bytes(block)
+        while True:
+            replacement = ToolResultBlock(
+                tool_use_id=block.tool_use_id,
+                is_error=block.is_error,
+                content={
+                    "artifact_ref": artifact.relative_path,
+                    "preview": preview,
+                    "notice": "完整结果已保存；如需完整内容，请重新执行该工具调用。",
+                },
+            )
+            if self._content_size_bytes(replacement) < original_size_bytes:
+                return replacement
+            if not preview:
+                return None
+            preview = preview[: len(preview) // 2]
 
     @classmethod
     def _content_size_bytes(cls, block: ToolResultBlock) -> int:

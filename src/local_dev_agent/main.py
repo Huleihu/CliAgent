@@ -6,6 +6,14 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
+from local_dev_agent.context import (
+    ContextBudget,
+    ContextManager,
+    FileSystemToolResultArtifactStore,
+    HistorySummaryCompactor,
+    ModelConversationSummarizer,
+    ToolResultBudgetCompactor,
+)
 from local_dev_agent.domain.messages import UserInputEvent
 from local_dev_agent.domain.state import SessionState
 from local_dev_agent.hooks import HookEvent, HookRegistry, HookRunner
@@ -54,6 +62,12 @@ task 只返回结构化结论和关联信息；收到结果后由你验收结论
 CLI_SYSTEM_PROMPT = (
     TODO_PLANNING_SYSTEM_PROMPT + "\n\n" + TASK_DELEGATION_SYSTEM_PROMPT
 )
+
+CLI_CONTEXT_WINDOW_TOKENS = 128_000
+"""CLI 首版使用的显式上下文窗口预算，后续可由模型配置替换。"""
+
+CLI_CONTEXT_SAFETY_MARGIN_TOKENS = 13_000
+"""为 Provider 格式化差异和最终输出保留的保守余量。"""
 
 
 def build_cli_system_prompt(skill_catalog: SkillCatalog) -> str:
@@ -107,6 +121,27 @@ def create_permission_hook_runner(workspace: Path) -> HookRunner:
     return HookRunner(registry)
 
 
+def create_context_manager(
+    *,
+    workspace: Path,
+    model: ModelClient,
+    max_output_tokens: int,
+) -> ContextManager:
+    """组装 S8 上下文管线，保持完整 Transcript 与模型请求视图分离。"""
+
+    return ContextManager(
+        ContextBudget(
+            context_window_tokens=CLI_CONTEXT_WINDOW_TOKENS,
+            max_output_tokens=max_output_tokens,
+            safety_margin_tokens=CLI_CONTEXT_SAFETY_MARGIN_TOKENS,
+        ),
+        ToolResultBudgetCompactor(
+            FileSystemToolResultArtifactStore(workspace / "var" / "artifacts")
+        ),
+        HistorySummaryCompactor(ModelConversationSummarizer(model)),
+    )
+
+
 def create_subagent_runner(
     *,
     repository: StateRepository,
@@ -149,9 +184,8 @@ def main() -> None:
         project_id=str(workspace),
     )
     repository.save_session(session)
-    model: ModelClient = DeepSeekAnthropicModelClient(
-        DeepSeekSettings.from_environment()
-    )
+    settings = DeepSeekSettings.from_environment()
+    model: ModelClient = DeepSeekAnthropicModelClient(settings)
     skill_catalog = FileSystemSkillCatalogLoader(workspace).load()
     tool_registry = create_tool_registry(workspace, skill_catalog=skill_catalog)
     hook_runner = create_permission_hook_runner(workspace)
@@ -171,6 +205,11 @@ def main() -> None:
         hook_runner=hook_runner,
         system_prompt=build_cli_system_prompt(skill_catalog),
         todo_reminder_policy=TodoReminderPolicy(),
+        context_manager=create_context_manager(
+            workspace=workspace,
+            model=model,
+            max_output_tokens=settings.max_tokens,
+        ),
     )
 
     print("Local Dev Agent")

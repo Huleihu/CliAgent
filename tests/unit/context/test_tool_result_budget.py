@@ -147,6 +147,25 @@ def test_compactor_replaces_large_result_only_in_derived_snapshot(tmp_path: Path
     }
 
 
+def test_compactor_reduces_the_preview_until_the_reference_is_smaller(
+    tmp_path: Path,
+) -> None:
+    original_block = _result("toolu-1", "甲" * 1_000)
+    snapshot = _snapshot_with_last_message(original_block)
+    compactor = ToolResultBudgetCompactor(
+        FileSystemToolResultArtifactStore(tmp_path),
+        max_total_bytes=100,
+        minimum_artifact_bytes=20,
+    )
+
+    result = compactor.compact(snapshot)
+
+    compacted_block = result.snapshot.messages[-1].content[0]
+    assert isinstance(compacted_block, ToolResultBlock)
+    assert len(compacted_block.content["preview"]) < len('{"content":"甲"' + "甲" * 1_000)
+    assert result.remaining_total_bytes < result.original_total_bytes
+
+
 def test_compactor_persists_largest_results_first_until_within_budget(
     tmp_path: Path,
 ) -> None:

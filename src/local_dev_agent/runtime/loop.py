@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 import logging
 
+from local_dev_agent.context import ContextInputSnapshot, ContextManager
 from local_dev_agent.domain.state import (
     RunState,
     RunStatus,
@@ -76,6 +77,7 @@ class MinimalAgentLoop:
         hook_runner: HookRunner | None = None,
         system_prompt: str | None = None,
         todo_reminder_policy: TodoReminderPolicy | None = None,
+        context_manager: ContextManager | None = None,
     ) -> None:
         if max_turns < 1:
             raise ValueError("Agent Loop 的最大模型调用轮次必须大于或等于 1。")
@@ -92,6 +94,7 @@ class MinimalAgentLoop:
         self._max_turns = max_turns
         self._system_prompt = system_prompt
         self._todo_reminder_policy = todo_reminder_policy
+        self._context_manager = context_manager
 
     def execute(
         self,
@@ -331,14 +334,30 @@ class MinimalAgentLoop:
         log_context: dict[str, str],
     ) -> ModelResponse:
         logger.info("开始模型调用。", extra=log_context)
+        system_prompt = self._request_system_prompt()
+        tools = self._registry.list_definitions()
+        messages = conversation
+        if self._context_manager is not None:
+            context_package = self._context_manager.prepare(
+                ContextInputSnapshot(
+                    session_id=session_id,
+                    run_id=run_id,
+                    messages=conversation,
+                    tools=tools,
+                    system_prompt=system_prompt,
+                )
+            )
+            messages = context_package.snapshot.messages
+            tools = context_package.snapshot.tools
+            system_prompt = context_package.snapshot.system_prompt
         try:
             response = self._model.generate(
                 ModelRequest.from_messages(
                     session_id=session_id,
                     run_id=run_id,
-                    messages=conversation,
-                    tools=self._registry.list_definitions(),
-                    system_prompt=self._request_system_prompt(),
+                    messages=messages,
+                    tools=tools,
+                    system_prompt=system_prompt,
                 )
             )
         except Exception:

@@ -2,6 +2,14 @@ from datetime import datetime, timezone
 
 import pytest
 
+from local_dev_agent.context import (
+    ContextBudget,
+    ContextManager,
+    FileSystemToolResultArtifactStore,
+    HistorySummaryCompactor,
+    ModelConversationSummarizer,
+    ToolResultBudgetCompactor,
+)
 from local_dev_agent.domain.messages import UserInputEvent
 from local_dev_agent.domain.state import (
     RunStatus,
@@ -989,3 +997,143 @@ def test_minimal_agent_loop_returns_pre_tool_hook_block_to_the_model(tmp_path) -
     assert hook.contexts[0].step_id != start.first_step.step_id
     assert hook.contexts[0].request.call_id == "toolu-1"
     assert result.response.text == "工具调用已被拒绝。"
+
+
+def test_minimal_agent_loop_uses_a_summary_view_without_rewriting_transcript(
+    tmp_path,
+) -> None:
+    timestamp = datetime(2026, 7, 27, 9, 0, tzinfo=timezone.utc)
+    repository = JsonFileStateRepository(tmp_path / "state")
+    conversation_repository = JsonFileConversationRepository(tmp_path / "state")
+    session = SessionState.create(
+        session_id="session-1",
+        tenant_id="tenant-1",
+        user_id="user-1",
+        project_id="project-1",
+        created_at=timestamp,
+    )
+    repository.save_session(session)
+    start = UserInputRuntimeService(repository).handle(
+        UserInputEvent.create(
+            session_id=session.session_id,
+            content="甲" * 500,
+            occurred_at=timestamp,
+        )
+    )
+    model = ScriptedModel(
+        (
+            ModelResponse.text_completion("当前目标：继续处理用户请求。"),
+            ModelResponse.text_completion("已完成处理。"),
+        )
+    )
+    context_manager = ContextManager(
+        ContextBudget(
+            context_window_tokens=200,
+            max_output_tokens=1,
+            safety_margin_tokens=1,
+        ),
+        ToolResultBudgetCompactor(
+            FileSystemToolResultArtifactStore(tmp_path / "artifacts")
+        ),
+        HistorySummaryCompactor(ModelConversationSummarizer(model)),
+    )
+
+    result = MinimalAgentLoop(
+        repository,
+        model,
+        conversation_repository=conversation_repository,
+        context_manager=context_manager,
+    ).execute(start, occurred_at=timestamp)
+
+    summary_request, final_request = model.requests
+    assert summary_request.tools == ()
+    assert final_request.conversation[0].content == (
+        TextBlock("[已压缩的历史摘要]\n\n当前目标：继续处理用户请求。"),
+    )
+    assert conversation_repository.get_messages(session.session_id)[0].content == (
+        TextBlock("甲" * 500),
+    )
+    assert result.response.text == "已完成处理。"
+
+
+def test_minimal_agent_loop_uses_an_artifact_view_without_rewriting_tool_transcript(
+    tmp_path,
+) -> None:
+    timestamp = datetime(2026, 7, 27, 9, 30, tzinfo=timezone.utc)
+    repository = JsonFileStateRepository(tmp_path / "state")
+    conversation_repository = JsonFileConversationRepository(tmp_path / "state")
+    session = SessionState.create(
+        session_id="session-1",
+        tenant_id="tenant-1",
+        user_id="user-1",
+        project_id="project-1",
+        created_at=timestamp,
+    )
+    repository.save_session(session)
+    start = UserInputRuntimeService(repository).handle(
+        UserInputEvent.create(
+            session_id=session.session_id,
+            content="读取大型日志。",
+            occurred_at=timestamp,
+        )
+    )
+    registry = ToolRegistry()
+    registry.register(
+        FakeTool(
+            definition=ToolDefinition(
+                name="read_file",
+                description="读取文本文件。",
+                parameters={"type": "object", "properties": {}},
+            ),
+            result={"content": "甲" * 1_000},
+        )
+    )
+    model = ScriptedModel(
+        (
+            ModelResponse(
+                stop_reason=StopReason.TOOL_USE,
+                content=(
+                    ToolUseBlock(
+                        tool_use_id="toolu-1",
+                        name="read_file",
+                        input={},
+                    ),
+                ),
+            ),
+            ModelResponse.text_completion("已读取大型日志。"),
+        )
+    )
+
+    class UnexpectedSummarizer:
+        def summarize(self, snapshot) -> str:
+            raise AssertionError("当前预算充足，不应生成历史摘要。")
+
+    context_manager = ContextManager(
+        ContextBudget(
+            context_window_tokens=10_000,
+            max_output_tokens=1,
+            safety_margin_tokens=1,
+        ),
+        ToolResultBudgetCompactor(
+            FileSystemToolResultArtifactStore(tmp_path / "artifacts"),
+            max_total_bytes=100,
+            minimum_artifact_bytes=20,
+        ),
+        HistorySummaryCompactor(UnexpectedSummarizer()),
+    )
+
+    result = MinimalAgentLoop(
+        repository,
+        model,
+        registry,
+        conversation_repository,
+        context_manager=context_manager,
+    ).execute(start, occurred_at=timestamp)
+
+    compacted_tool_result = model.requests[1].conversation[2].content[0]
+    assert isinstance(compacted_tool_result, ToolResultBlock)
+    assert "artifact_ref" in compacted_tool_result.content
+    persisted_tool_result = conversation_repository.get_messages(session.session_id)[2].content[0]
+    assert isinstance(persisted_tool_result, ToolResultBlock)
+    assert persisted_tool_result.content == {"content": "甲" * 1_000}
+    assert result.response.text == "已读取大型日志。"

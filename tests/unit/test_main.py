@@ -4,6 +4,7 @@ from pathlib import Path
 from local_dev_agent.domain.state import SessionState
 from local_dev_agent.hooks import HookDecision, HookEvent, PreToolUseContext
 from local_dev_agent.main import create_permission_hook_runner
+from local_dev_agent.main import create_context_manager
 from local_dev_agent.main import create_subagent_runner
 from local_dev_agent.main import create_tool_registry
 from local_dev_agent.main import default_workspace
@@ -13,6 +14,7 @@ from local_dev_agent.main import CLI_SYSTEM_PROMPT
 from local_dev_agent.main import TODO_PLANNING_SYSTEM_PROMPT
 from local_dev_agent.main import TASK_DELEGATION_SYSTEM_PROMPT
 from local_dev_agent.models.fake import FakeModel
+from local_dev_agent.context import ContextManager
 from local_dev_agent.models.ports import (
     ModelRequest,
     ModelResponse,
@@ -64,6 +66,16 @@ def test_create_tool_registry_registers_the_read_only_file_listing_tool(tmp_path
         "todo_write",
         "write_file",
     ]
+
+
+def test_create_context_manager_assembles_the_s8_pipeline(tmp_path) -> None:
+    manager = create_context_manager(
+        workspace=tmp_path,
+        model=FakeModel(ModelResponse.text_completion("不会调用。")),
+        max_output_tokens=8_000,
+    )
+
+    assert isinstance(manager, ContextManager)
 
 
 def _skill_catalog() -> SkillCatalog:
