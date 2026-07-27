@@ -3,6 +3,7 @@
 from typing import Protocol
 
 from .checkpoints import HistorySummaryCheckpoint
+from .budget import ContextInputSnapshot
 
 
 class HistorySummaryCheckpointRepository(Protocol):
@@ -13,3 +14,15 @@ class HistorySummaryCheckpointRepository(Protocol):
 
     def save(self, checkpoint: HistorySummaryCheckpoint) -> None:
         """原子替换会话当前检查点，不修改 Conversation Transcript。"""
+
+
+class HistorySummaryCheckpointRebuilder(Protocol):
+    """始终从完整原始历史重建检查点的可替换端口。"""
+
+    def rebuild(
+        self,
+        snapshot: ContextInputSnapshot,
+        *,
+        desired_covered_message_count: int,
+    ) -> HistorySummaryCheckpoint:
+        """根据完整原始快照创建一个覆盖安全边界的检查点。"""
