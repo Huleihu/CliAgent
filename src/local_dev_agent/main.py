@@ -10,7 +10,9 @@ from local_dev_agent.context import (
     ContextBudget,
     ContextManager,
     FileSystemToolResultArtifactStore,
+    FullHistorySummaryCheckpointRebuilder,
     HistorySummaryCompactor,
+    HistorySummaryCheckpointService,
     ModelConversationSummarizer,
     ToolResultBudgetCompactor,
 )
@@ -29,6 +31,9 @@ from local_dev_agent.skills import (
 )
 from local_dev_agent.storage.json_state_repository import JsonFileStateRepository
 from local_dev_agent.storage.json_conversation_repository import JsonFileConversationRepository
+from local_dev_agent.storage.json_history_summary_checkpoint_repository import (
+    JsonFileHistorySummaryCheckpointRepository,
+)
 from local_dev_agent.storage.conversation_ports import ConversationRepository
 from local_dev_agent.storage.ports import StateRepository
 from local_dev_agent.subagents import (
@@ -78,6 +83,9 @@ CLI_CONTEXT_WINDOW_TOKENS = 128_000
 
 CLI_CONTEXT_SAFETY_MARGIN_TOKENS = 13_000
 """为 Provider 格式化差异和最终输出保留的保守余量。"""
+
+CLI_HISTORY_SUMMARY_CHECKPOINT_TAIL_MESSAGE_COUNT = 10
+"""重建历史摘要检查点时保留的最近原始消息数量。"""
 
 
 def build_cli_system_prompt(skill_catalog: SkillCatalog) -> str:
@@ -143,6 +151,7 @@ def create_context_manager(
 ) -> ContextManager:
     """组装 S8 上下文管线，保持完整 Transcript 与模型请求视图分离。"""
 
+    summarizer = ModelConversationSummarizer(model)
     return ContextManager(
         ContextBudget(
             context_window_tokens=CLI_CONTEXT_WINDOW_TOKENS,
@@ -152,7 +161,12 @@ def create_context_manager(
         ToolResultBudgetCompactor(
             FileSystemToolResultArtifactStore(workspace / "var" / "artifacts")
         ),
-        HistorySummaryCompactor(ModelConversationSummarizer(model)),
+        HistorySummaryCompactor(summarizer),
+        history_summary_checkpoint_service=HistorySummaryCheckpointService(
+            JsonFileHistorySummaryCheckpointRepository(workspace / "var" / "state"),
+            FullHistorySummaryCheckpointRebuilder(summarizer),
+        ),
+        checkpoint_tail_message_count=CLI_HISTORY_SUMMARY_CHECKPOINT_TAIL_MESSAGE_COUNT,
     )
 
 

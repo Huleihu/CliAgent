@@ -6,7 +6,9 @@ from local_dev_agent.context import (
     ContextBudget,
     ContextManager,
     FileSystemToolResultArtifactStore,
+    FullHistorySummaryCheckpointRebuilder,
     HistorySummaryCompactor,
+    HistorySummaryCheckpointService,
     ModelConversationSummarizer,
     ToolResultBudgetCompactor,
 )
@@ -43,6 +45,9 @@ from local_dev_agent.runtime.input_service import UserInputRuntimeService
 from local_dev_agent.runtime.loop import MinimalAgentLoop
 from local_dev_agent.storage.json_state_repository import JsonFileStateRepository
 from local_dev_agent.storage.json_conversation_repository import JsonFileConversationRepository
+from local_dev_agent.storage.json_history_summary_checkpoint_repository import (
+    JsonFileHistorySummaryCheckpointRepository,
+)
 from local_dev_agent.tools import FakeTool, ToolDefinition, ToolRegistry
 from local_dev_agent.tools.builtin import (
     CompactContextTool,
@@ -1112,6 +1117,70 @@ def test_minimal_agent_loop_uses_a_summary_view_without_rewriting_transcript(
     assert final_request.conversation[0].content == (
         TextBlock("[已压缩的历史摘要]\n\n当前目标：继续处理用户请求。"),
     )
+    assert conversation_repository.get_messages(session.session_id)[0].content == (
+        TextBlock("甲" * 500),
+    )
+    assert result.response.text == "已完成处理。"
+
+
+def test_minimal_agent_loop_rebuilds_a_checkpoint_without_rewriting_transcript(
+    tmp_path,
+) -> None:
+    timestamp = datetime(2026, 7, 27, 9, 15, tzinfo=timezone.utc)
+    repository = JsonFileStateRepository(tmp_path / "state")
+    conversation_repository = JsonFileConversationRepository(tmp_path / "state")
+    checkpoint_repository = JsonFileHistorySummaryCheckpointRepository(tmp_path / "state")
+    session = SessionState.create(
+        session_id="session-1",
+        tenant_id="tenant-1",
+        user_id="user-1",
+        project_id="project-1",
+        created_at=timestamp,
+    )
+    repository.save_session(session)
+    start = UserInputRuntimeService(repository).handle(
+        UserInputEvent.create(
+            session_id=session.session_id,
+            content="甲" * 500,
+            occurred_at=timestamp,
+        )
+    )
+    model = ScriptedModel(
+        (
+            ModelResponse.text_completion("当前目标：继续处理用户请求。"),
+            ModelResponse.text_completion("已完成处理。"),
+        )
+    )
+    summarizer = ModelConversationSummarizer(model)
+    context_manager = ContextManager(
+        ContextBudget(
+            context_window_tokens=200,
+            max_output_tokens=1,
+            safety_margin_tokens=1,
+        ),
+        ToolResultBudgetCompactor(
+            FileSystemToolResultArtifactStore(tmp_path / "artifacts")
+        ),
+        HistorySummaryCompactor(summarizer),
+        history_summary_checkpoint_service=HistorySummaryCheckpointService(
+            checkpoint_repository,
+            FullHistorySummaryCheckpointRebuilder(summarizer),
+        ),
+    )
+
+    result = MinimalAgentLoop(
+        repository,
+        model,
+        conversation_repository=conversation_repository,
+        context_manager=context_manager,
+    ).execute(start, occurred_at=timestamp)
+
+    summary_request, final_request = model.requests
+    assert summary_request.tools == ()
+    assert final_request.conversation[0].content == (
+        TextBlock("[历史摘要检查点]\n\n当前目标：继续处理用户请求。"),
+    )
+    assert checkpoint_repository.load(session.session_id) is not None
     assert conversation_repository.get_messages(session.session_id)[0].content == (
         TextBlock("甲" * 500),
     )

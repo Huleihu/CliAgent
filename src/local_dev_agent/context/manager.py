@@ -12,6 +12,7 @@ from .budget import (
     ContextInputSnapshot,
     Utf8ByteContextBudgetEstimator,
 )
+from .checkpoint_service import HistorySummaryCheckpointService
 from .structural_compaction import ConversationSnipCompactor, ToolResultMicroCompactor
 from .summary import HistorySummaryCompactor
 from .tool_result_budget import ToolResultBudgetCompactor
@@ -59,6 +60,8 @@ class ContextManager:
         estimator: ContextBudgetEstimator | None = None,
         snip_compactor: ConversationSnipCompactor | None = None,
         micro_compactor: ToolResultMicroCompactor | None = None,
+        history_summary_checkpoint_service: HistorySummaryCheckpointService | None = None,
+        checkpoint_tail_message_count: int = 10,
     ) -> None:
         if not isinstance(budget, ContextBudget):
             raise ValueError("字段“budget”必须是 ContextBudget 对象。")
@@ -72,12 +75,28 @@ class ContextManager:
             raise ValueError("snip_compactor 必须提供 compact 方法。")
         if micro_compactor is not None and not hasattr(micro_compactor, "compact"):
             raise ValueError("micro_compactor 必须提供 compact 方法。")
+        if history_summary_checkpoint_service is not None and (
+            not hasattr(history_summary_checkpoint_service, "restore_view")
+            or not hasattr(history_summary_checkpoint_service, "rebuild_view_from_full_history")
+        ):
+            raise ValueError(
+                "history_summary_checkpoint_service 必须提供 restore_view 和 "
+                "rebuild_view_from_full_history 方法。"
+            )
+        if (
+            isinstance(checkpoint_tail_message_count, bool)
+            or not isinstance(checkpoint_tail_message_count, int)
+            or checkpoint_tail_message_count < 1
+        ):
+            raise ValueError("checkpoint_tail_message_count 必须是正整数。")
         self._budget = budget
         self._tool_result_budget_compactor = tool_result_budget_compactor
         self._history_summary_compactor = history_summary_compactor
         self._estimator = estimator or Utf8ByteContextBudgetEstimator()
         self._snip_compactor = snip_compactor or ConversationSnipCompactor()
         self._micro_compactor = micro_compactor or ToolResultMicroCompactor()
+        self._history_summary_checkpoint_service = history_summary_checkpoint_service
+        self._checkpoint_tail_message_count = checkpoint_tail_message_count
 
     def prepare(
         self,
@@ -91,19 +110,70 @@ class ContextManager:
             raise ValueError("字段“snapshot”必须是 ContextInputSnapshot 对象。")
         if not isinstance(force_history_compaction, bool):
             raise ValueError("字段“force_history_compaction”必须是布尔值。")
-        budget_result = self._tool_result_budget_compactor.compact(snapshot)
-        prepared_snapshot = self._snip_compactor.compact(budget_result.snapshot)
-        prepared_snapshot = self._micro_compactor.compact(prepared_snapshot)
-        budget_report = self._estimator.estimate(prepared_snapshot, self._budget)
-        history_compacted = force_history_compaction or budget_report.exceeds_budget
-        if history_compacted:
-            prepared_snapshot = self._history_summary_compactor.compact(prepared_snapshot)
-            budget_report = self._estimator.estimate(prepared_snapshot, self._budget)
+        checkpoint_view = self._restore_checkpoint_view(snapshot)
+        prepared_snapshot, budget_report, artifacts = self._prepare_pre_summary(
+            checkpoint_view
+        )
+        history_compacted = checkpoint_view is not snapshot
+        if force_history_compaction or budget_report.exceeds_budget:
+            history_compacted = True
+            if self._history_summary_checkpoint_service is not None:
+                rebuilt_view = self._history_summary_checkpoint_service.rebuild_view_from_full_history(
+                    snapshot,
+                    desired_covered_message_count=self._desired_checkpoint_coverage_count(
+                        snapshot
+                    ),
+                )
+                prepared_snapshot, budget_report, artifacts = self._prepare_pre_summary(
+                    rebuilt_view
+                )
+            else:
+                prepared_snapshot = self._history_summary_compactor.compact(prepared_snapshot)
+                budget_report = self._estimator.estimate(prepared_snapshot, self._budget)
         if budget_report.exceeds_budget:
             raise ContextBudgetExceededError("历史摘要后上下文仍超过输入预算。")
         return ContextPackage(
             snapshot=prepared_snapshot,
             budget_report=budget_report,
-            artifacts=budget_result.artifacts,
+            artifacts=artifacts,
             history_compacted=history_compacted,
         )
+
+    def _restore_checkpoint_view(
+        self,
+        snapshot: ContextInputSnapshot,
+    ) -> ContextInputSnapshot:
+        """优先复用可信检查点；缺失检查点时保持完整原始快照。"""
+
+        if self._history_summary_checkpoint_service is None:
+            return snapshot
+        return self._history_summary_checkpoint_service.restore_view(snapshot)
+
+    def _prepare_pre_summary(
+        self,
+        snapshot: ContextInputSnapshot,
+    ) -> tuple[
+        ContextInputSnapshot,
+        ContextBudgetReport,
+        tuple[ToolResultArtifact, ...],
+    ]:
+        """在摘要决策前执行既有 Artifact、L1、L2 与预算估算管线。"""
+
+        budget_result = self._tool_result_budget_compactor.compact(snapshot)
+        prepared_snapshot = self._snip_compactor.compact(budget_result.snapshot)
+        prepared_snapshot = self._micro_compactor.compact(prepared_snapshot)
+        return (
+            prepared_snapshot,
+            self._estimator.estimate(prepared_snapshot, self._budget),
+            budget_result.artifacts,
+        )
+
+    def _desired_checkpoint_coverage_count(
+        self,
+        snapshot: ContextInputSnapshot,
+    ) -> int:
+        """保留最近原始尾部消息；短历史沿用既有 L4 的全历史摘要语义。"""
+
+        if len(snapshot.messages) <= self._checkpoint_tail_message_count:
+            return len(snapshot.messages)
+        return len(snapshot.messages) - self._checkpoint_tail_message_count

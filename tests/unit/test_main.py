@@ -14,11 +14,14 @@ from local_dev_agent.main import CLI_SYSTEM_PROMPT
 from local_dev_agent.main import TODO_PLANNING_SYSTEM_PROMPT
 from local_dev_agent.main import TASK_DELEGATION_SYSTEM_PROMPT
 from local_dev_agent.models.fake import FakeModel
-from local_dev_agent.context import ContextManager
+from local_dev_agent.context import ContextInputSnapshot, ContextManager
 from local_dev_agent.models.ports import (
+    MessageRole,
+    ModelMessage,
     ModelRequest,
     ModelResponse,
     StopReason,
+    TextBlock,
     ToolUseBlock,
 )
 from local_dev_agent.skills import SkillCatalog, SkillDocument, SkillMetadata
@@ -78,6 +81,30 @@ def test_create_context_manager_assembles_the_s8_pipeline(tmp_path) -> None:
     )
 
     assert isinstance(manager, ContextManager)
+
+
+def test_create_context_manager_persists_rebuilt_checkpoints_under_the_cli_state_root(
+    tmp_path,
+) -> None:
+    manager = create_context_manager(
+        workspace=tmp_path,
+        model=FakeModel(ModelResponse.text_completion("当前目标：继续开发。")),
+        max_output_tokens=8_000,
+    )
+    snapshot = ContextInputSnapshot(
+        session_id="session-1",
+        run_id="run-1",
+        messages=(
+            ModelMessage(role=MessageRole.USER, content=(TextBlock("检查当前状态。"),)),
+        ),
+    )
+
+    package = manager.prepare(snapshot, force_history_compaction=True)
+
+    assert package.history_compacted
+    assert (
+        tmp_path / "var" / "state" / "history-summary-checkpoints" / "session-1.json"
+    ).is_file()
 
 
 def _skill_catalog() -> SkillCatalog:
