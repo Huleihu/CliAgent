@@ -201,6 +201,17 @@ class MemoryCatalogRepository:
         return self._catalog
 
 
+class RecordingMemoryExtractionService:
+    """验证 Runtime 仅在正常结束后交出本 Run 原始消息。"""
+
+    def __init__(self) -> None:
+        self.calls = []
+
+    def extract_and_save(self, *, session_id, run_id, messages):
+        self.calls.append((session_id, run_id, messages))
+        return ()
+
+
 def test_minimal_agent_loop_completes_a_text_response_and_persists_states(
     tmp_path,
 ) -> None:
@@ -297,6 +308,35 @@ def test_minimal_agent_loop_injects_memory_without_persisting_derived_content(tm
     )
     assert conversation_repository.get_messages(session.session_id)[0].content == (
         TextBlock("继续认证重构。"),
+    )
+
+
+def test_minimal_agent_loop_extracts_only_current_run_raw_messages_after_completion(tmp_path) -> None:
+    timestamp = datetime(2026, 7, 28, 10, 0, tzinfo=timezone.utc)
+    repository = JsonFileStateRepository(tmp_path / "state")
+    session = SessionState.create(
+        session_id="session-1",
+        tenant_id="tenant-1",
+        user_id="user-1",
+        project_id="project-1",
+        created_at=timestamp,
+    )
+    repository.save_session(session)
+    start = UserInputRuntimeService(repository).handle(
+        UserInputEvent.create(session_id=session.session_id, content="记住使用 tab。", occurred_at=timestamp)
+    )
+    service = RecordingMemoryExtractionService()
+
+    MinimalAgentLoop(
+        repository,
+        FakeModel(ModelResponse.text_completion("会遵守 tab 偏好。")),
+        memory_extraction_service=service,
+    ).execute(start, occurred_at=timestamp)
+
+    assert service.calls[0][0:2] == ("session-1", service.calls[0][1])
+    assert service.calls[0][2] == (
+        ModelMessage(MessageRole.USER, (TextBlock("记住使用 tab。"),)),
+        ModelMessage(MessageRole.ASSISTANT, (TextBlock("会遵守 tab 偏好。"),)),
     )
 
 

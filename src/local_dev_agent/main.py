@@ -22,7 +22,9 @@ from local_dev_agent.hooks import HookEvent, HookRegistry, HookRunner
 from local_dev_agent.models import DeepSeekAnthropicModelClient, DeepSeekSettings, ModelClient
 from local_dev_agent.memory import (
     FileSystemMemoryRepository,
+    MemoryExtractionService,
     MemoryLoader,
+    ModelMemoryExtractor,
     ModelMemorySelector,
 )
 from local_dev_agent.observability import configure_logging
@@ -184,6 +186,19 @@ def create_memory_loader(*, workspace: Path, model: ModelClient) -> MemoryLoader
     )
 
 
+def create_memory_extraction_service(
+    *,
+    workspace: Path,
+    model: ModelClient,
+) -> MemoryExtractionService:
+    """组装父 Agent 正常结束后使用的长期记忆提取服务。"""
+
+    return MemoryExtractionService(
+        FileSystemMemoryRepository(workspace / "var" / "memory"),
+        ModelMemoryExtractor(model),
+    )
+
+
 def create_subagent_runner(
     *,
     repository: StateRepository,
@@ -253,6 +268,10 @@ def main() -> None:
             max_output_tokens=settings.max_tokens,
         ),
         memory_loader=create_memory_loader(workspace=workspace, model=model),
+        memory_extraction_service=create_memory_extraction_service(
+            workspace=workspace,
+            model=model,
+        ),
     )
 
     print("Local Dev Agent")

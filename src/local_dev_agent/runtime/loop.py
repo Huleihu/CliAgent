@@ -38,7 +38,11 @@ from local_dev_agent.models import (
     ToolResultBlock,
     ToolUseBlock,
 )
-from local_dev_agent.memory import MemoryLoader, MemoryRequestContext
+from local_dev_agent.memory import (
+    MemoryExtractionService,
+    MemoryLoader,
+    MemoryRequestContext,
+)
 from local_dev_agent.storage.ports import StateRepository
 from local_dev_agent.storage.conversation_ports import ConversationRepository
 from local_dev_agent.todos import TodoReminderPolicy
@@ -86,6 +90,7 @@ class MinimalAgentLoop:
         todo_reminder_policy: TodoReminderPolicy | None = None,
         context_manager: ContextManager | None = None,
         memory_loader: MemoryLoader | None = None,
+        memory_extraction_service: MemoryExtractionService | None = None,
     ) -> None:
         if max_turns < 1:
             raise ValueError("Agent Loop 的最大模型调用轮次必须大于或等于 1。")
@@ -95,6 +100,11 @@ class MinimalAgentLoop:
             raise ValueError("Agent Loop 的系统提示必须是非空字符串。")
         if memory_loader is not None and not hasattr(memory_loader, "load"):
             raise ValueError("memory_loader 必须提供 load 方法。")
+        if memory_extraction_service is not None and not hasattr(
+            memory_extraction_service,
+            "extract_and_save",
+        ):
+            raise ValueError("memory_extraction_service 必须提供 extract_and_save 方法。")
         self._repository = repository
         self._model = model
         self._registry = registry or ToolRegistry()
@@ -106,6 +116,7 @@ class MinimalAgentLoop:
         self._todo_reminder_policy = todo_reminder_policy
         self._context_manager = context_manager
         self._memory_loader = memory_loader
+        self._memory_extraction_service = memory_extraction_service
 
     def execute(
         self,
@@ -131,6 +142,7 @@ class MinimalAgentLoop:
             content=(TextBlock(text=start.event.content),),
         )
         conversation = self._load_conversation(start.session.session_id)
+        run_message_start = len(conversation)
         conversation.append(user_message)
         self._append_messages(start.session.session_id, (user_message,))
         self._trigger_user_prompt_submit(
@@ -227,6 +239,12 @@ class MinimalAgentLoop:
                 run_id=running_run.run_id,
                 step_id=current_step.step_id,
                 response=response,
+                log_context=log_context,
+            )
+            self._extract_memories(
+                session_id=start.session.session_id,
+                run_id=running_run.run_id,
+                messages=tuple(conversation[run_message_start:]),
                 log_context=log_context,
             )
             completed_run = running_run.transition_to(
@@ -461,6 +479,31 @@ class MinimalAgentLoop:
                 extra=log_context,
             )
             return None
+
+    def _extract_memories(
+        self,
+        *,
+        session_id: str,
+        run_id: str,
+        messages: tuple[ModelMessage, ...],
+        log_context: dict[str, str],
+    ) -> None:
+        """在正常结束后沉淀当前 Run 的完整原始消息，失败不影响完成状态。"""
+
+        if self._memory_extraction_service is None:
+            return
+        try:
+            self._memory_extraction_service.extract_and_save(
+                session_id=session_id,
+                run_id=run_id,
+                messages=messages,
+            )
+        except Exception:
+            logger.warning(
+                "长期记忆提取失败，不影响运行完成。",
+                exc_info=True,
+                extra=log_context,
+            )
 
     def _requested_context_compaction(
         self,

@@ -48,6 +48,7 @@
 - 已完成 `learnClaude/s09_memory` 的第 1 个教学式小步：新增独立 `local_dev_agent.memory` 包，以不可变 `MemoryType`、`MemoryEntry` 与 `MemoryCatalog` 表示长期记忆的类型、受控 kebab-case 标识、单行索引描述和完整正文；新增 `MemoryRepository` 与 `FileSystemMemoryRepository`，将每条记忆保存为独立 Markdown + YAML frontmatter，并从全部条目稳定重建 `MEMORY.md` 索引。条目文件和索引均使用同目录临时文件、`fsync` 与原子替换；目录缺失返回空快照，frontmatter、UTF-8、文件名与标识不匹配、目录越界或重复标识均以中文错误拒绝。当前尚未实现记忆选择、模型注入、运行后提取、整理或 CLI/Runtime 装配。
 - 已完成 `learnClaude/s09_memory` 的第 2 个教学式小步：新增不可变 `MemorySelectionRequest`、`MemoryLoadBudget` 与 `MemoryLoadResult`，以 `MemorySelector` 隔离选择策略；`ModelMemorySelector` 使用无工具模型请求按目录名称和描述选择精确标识，模型异常、非正常停止或无效 JSON 时回退到稳定的 `KeywordMemorySelector`。`MemoryLoader` 基于一次仓储目录快照验证选择结果，并按条目数量、单条正文和总正文预算组装目录文本与 `<relevant_memories>` 派生内容；非法、重复、未知或超预算候选项不会阻断请求。当前尚未接入 Runtime、ContextManager、Transcript、CLI 或真实主模型调用。
 - 已完成 `learnClaude/s09_memory` 的第 3 个教学式小步：新增通用 `ContextInputSnapshotEnricher` 端口与 `MemoryRequestContext`，父 Agent 每个 Run 在用户消息持久化后只加载并选择一次工作区级记忆；ContextManager 先以完整原始历史恢复或重建 S8 检查点，再在派生视图中叠加长期记忆目录系统提示和相关正文，随后执行既有 Artifact、L1、L2 与预算。没有 ContextManager 时仍仅派生模型请求；原始 Conversation Transcript、检查点来源校验和子 Agent 均不接收或持久化记忆内容。CLI 现装配 `workspace/var/memory/` 文件仓储与模型选择器；空目录不会发起额外选择请求。当前尚未实现运行后提取或低频整理。
+- 已完成 `learnClaude/s09_memory` 的第 4 个教学式小步：新增 `MemoryExtractionRequest`、无工具 `ModelMemoryExtractor` 与 `MemoryExtractionService`；正常文本结束后，父 Agent 从当前 Run 的完整原始用户/助手消息提取候选长期记忆，与启动时目录去重后原子保存。提取模型只接受 JSON 数组，非法项目被忽略；重复标识不会覆盖既有记忆。提取服务在最终响应已追加 Transcript、Run 完成前触发，任何仓储或模型异常仅记录中文 WARNING，不影响既有完成结果；子 Agent 未装配该服务。CLI 现装配同一工作区记忆根目录的提取服务。当前尚未实现低频整理。
 - 使用 Conda 环境 `local-dev-agent`（Python 3.13）。
 
 ## 已完成
@@ -183,7 +184,7 @@
 - `anthropic`、`python-dotenv`、`pytest` 可在 Conda 环境中导入。
 - `ruff` 可运行。
 - 已人工核对 `TDD.md` 与 `AGENT_REQUIREMENTS_CHECKLIST.txt` 的 S01–S30 覆盖关系；本次仅修改文档，未运行代码测试。
-- `python -m pytest`：446 passed（覆盖状态机、JSON 文件状态仓储、会话 Transcript、最小内部事件协议、Runtime 输入编排、内容块模型协议、有界 Agent Loop、统一 logging、受控工具框架、DeepSeek Provider、多轮工具调用闭环、最小交互式启动入口、读写编辑文件工具、Hook 核心闭环、S3 简单权限策略、S5 待办领域契约、JSON Todo 仓储、TodoWrite 工具闭环、Todo 规划系统提示与临时 reminder、完整 S6 同步子 Agent 闭环、完整 S7 Skill Loading 闭环、S8 上下文预算与版本化历史摘要检查点闭环，以及 S9 长期记忆领域契约、原子文件仓储、模型/关键词选择、有预算加载与派生请求注入）。
+- `python -m pytest`：448 passed（覆盖状态机、JSON 文件状态仓储、会话 Transcript、最小内部事件协议、Runtime 输入编排、内容块模型协议、有界 Agent Loop、统一 logging、受控工具框架、DeepSeek Provider、多轮工具调用闭环、最小交互式启动入口、读写编辑文件工具、Hook 核心闭环、S3 简单权限策略、S5 待办领域契约、JSON Todo 仓储、TodoWrite 工具闭环、Todo 规划系统提示与临时 reminder、完整 S6 同步子 Agent 闭环、完整 S7 Skill Loading 闭环、S8 上下文预算与版本化历史摘要检查点闭环，以及 S9 长期记忆领域契约、原子文件仓储、选择、加载、派生请求注入与运行后提取）。
 - `python -m ruff check src tests`：通过。
 
 ## 下一步
