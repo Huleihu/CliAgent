@@ -31,6 +31,7 @@ from .checkpoint_views import (
     build_history_summary_checkpoint_messages,
     build_history_summary_checkpoint_view,
 )
+from .enrichment import ContextInputSnapshotEnricher
 from .manager import ContextBudgetExceededError, ContextManager, ContextPackage
 from .tool_result_budget import ToolResultBudgetCompactor, ToolResultBudgetResult
 from .structural_compaction import (
@@ -50,6 +51,7 @@ __all__ = [
     "ContextBudgetEstimator",
     "ContextBudgetReport",
     "ContextInputSnapshot",
+    "ContextInputSnapshotEnricher",
     "ContextManager",
     "ContextPackage",
     "HISTORY_SUMMARY_CHECKPOINT_SCHEMA_VERSION",

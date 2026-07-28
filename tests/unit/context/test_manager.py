@@ -41,6 +41,21 @@ class InMemoryCheckpointRepository:
         self.saved_checkpoints.append(checkpoint)
 
 
+class RecordingEnricher:
+    def __init__(self) -> None:
+        self.snapshots: list[ContextInputSnapshot] = []
+
+    def enrich(self, snapshot: ContextInputSnapshot) -> ContextInputSnapshot:
+        self.snapshots.append(snapshot)
+        return ContextInputSnapshot(
+            session_id=snapshot.session_id,
+            run_id=snapshot.run_id,
+            messages=snapshot.messages,
+            tools=snapshot.tools,
+            system_prompt="派生记忆提示。",
+        )
+
+
 def _snapshot_with_large_result() -> ContextInputSnapshot:
     return ContextInputSnapshot(
         session_id="session-1",
@@ -249,6 +264,46 @@ def test_context_manager_reuses_a_valid_checkpoint_before_preprocessors(tmp_path
     assert package.snapshot.messages[1:] == snapshot.messages[2:]
     assert checkpoint_summarizer.snapshots == []
     assert fallback_summarizer.snapshots == []
+
+
+def test_context_manager_enriches_only_the_restored_checkpoint_view(tmp_path: Path) -> None:
+    snapshot = ContextInputSnapshot(
+        session_id="session-1",
+        run_id="run-1",
+        messages=(
+            ModelMessage(role=MessageRole.USER, content=(TextBlock("较早历史。"),)),
+            ModelMessage(role=MessageRole.ASSISTANT, content=(TextBlock("较早回复。"),)),
+            ModelMessage(role=MessageRole.USER, content=(TextBlock("最新问题。"),)),
+        ),
+    )
+    checkpoint = HistorySummaryCheckpoint(
+        session_id=snapshot.session_id,
+        covered_message_count=2,
+        source_checksum=calculate_history_source_checksum(
+            session_id=snapshot.session_id,
+            messages=snapshot.messages[:2],
+        ),
+        summary="已完成较早工作。",
+    )
+    enricher = RecordingEnricher()
+    manager = ContextManager(
+        ContextBudget(10_000, 1, 1),
+        ToolResultBudgetCompactor(FileSystemToolResultArtifactStore(tmp_path / "artifacts")),
+        HistorySummaryCompactor(RecordingSummarizer("不会调用。")),
+        history_summary_checkpoint_service=HistorySummaryCheckpointService(
+            InMemoryCheckpointRepository(checkpoint),
+            FullHistorySummaryCheckpointRebuilder(RecordingSummarizer("不会重建。")),
+        ),
+    )
+
+    package = manager.prepare(snapshot, context_enricher=enricher)
+
+    assert enricher.snapshots[0].messages[0].content == (
+        TextBlock("[历史摘要检查点]\n\n已完成较早工作。"),
+    )
+    assert enricher.snapshots[0].messages != snapshot.messages
+    assert package.snapshot.system_prompt == "派生记忆提示。"
+    assert snapshot.system_prompt is None
 
 
 def test_context_manager_rebuilds_a_checkpoint_from_raw_history_after_forced_compaction(

@@ -13,6 +13,7 @@ from .budget import (
     Utf8ByteContextBudgetEstimator,
 )
 from .checkpoint_service import HistorySummaryCheckpointService
+from .enrichment import ContextInputSnapshotEnricher
 from .structural_compaction import ConversationSnipCompactor, ToolResultMicroCompactor
 from .summary import HistorySummaryCompactor
 from .tool_result_budget import ToolResultBudgetCompactor
@@ -103,6 +104,7 @@ class ContextManager:
         snapshot: ContextInputSnapshot,
         *,
         force_history_compaction: bool = False,
+        context_enricher: ContextInputSnapshotEnricher | None = None,
     ) -> ContextPackage:
         """按 Artifact 化、L1、L2、预算复算、L4 的顺序装配请求视图。"""
 
@@ -110,9 +112,12 @@ class ContextManager:
             raise ValueError("字段“snapshot”必须是 ContextInputSnapshot 对象。")
         if not isinstance(force_history_compaction, bool):
             raise ValueError("字段“force_history_compaction”必须是布尔值。")
+        if context_enricher is not None and not hasattr(context_enricher, "enrich"):
+            raise ValueError("context_enricher 必须提供 enrich 方法。")
         checkpoint_view = self._restore_checkpoint_view(snapshot)
         prepared_snapshot, budget_report, artifacts = self._prepare_pre_summary(
-            checkpoint_view
+            checkpoint_view,
+            context_enricher=context_enricher,
         )
         history_compacted = checkpoint_view is not snapshot
         if force_history_compaction or budget_report.exceeds_budget:
@@ -125,11 +130,22 @@ class ContextManager:
                     ),
                 )
                 prepared_snapshot, budget_report, artifacts = self._prepare_pre_summary(
-                    rebuilt_view
+                    rebuilt_view,
+                    context_enricher=context_enricher,
                 )
             else:
-                prepared_snapshot = self._history_summary_compactor.compact(prepared_snapshot)
-                budget_report = self._estimator.estimate(prepared_snapshot, self._budget)
+                summary_source = (
+                    checkpoint_view
+                    if context_enricher is not None
+                    else prepared_snapshot
+                )
+                summarized_snapshot = self._history_summary_compactor.compact(
+                    summary_source
+                )
+                prepared_snapshot, budget_report, artifacts = self._prepare_pre_summary(
+                    summarized_snapshot,
+                    context_enricher=context_enricher,
+                )
         if budget_report.exceeds_budget:
             raise ContextBudgetExceededError("历史摘要后上下文仍超过输入预算。")
         return ContextPackage(
@@ -152,6 +168,8 @@ class ContextManager:
     def _prepare_pre_summary(
         self,
         snapshot: ContextInputSnapshot,
+        *,
+        context_enricher: ContextInputSnapshotEnricher | None,
     ) -> tuple[
         ContextInputSnapshot,
         ContextBudgetReport,
@@ -159,7 +177,12 @@ class ContextManager:
     ]:
         """在摘要决策前执行既有 Artifact、L1、L2 与预算估算管线。"""
 
-        budget_result = self._tool_result_budget_compactor.compact(snapshot)
+        enriched_snapshot = (
+            context_enricher.enrich(snapshot)
+            if context_enricher is not None
+            else snapshot
+        )
+        budget_result = self._tool_result_budget_compactor.compact(enriched_snapshot)
         prepared_snapshot = self._snip_compactor.compact(budget_result.snapshot)
         prepared_snapshot = self._micro_compactor.compact(prepared_snapshot)
         return (

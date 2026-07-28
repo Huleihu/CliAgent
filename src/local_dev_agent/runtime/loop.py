@@ -6,7 +6,11 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 import logging
 
-from local_dev_agent.context import ContextInputSnapshot, ContextManager
+from local_dev_agent.context import (
+    ContextInputSnapshot,
+    ContextInputSnapshotEnricher,
+    ContextManager,
+)
 from local_dev_agent.domain.state import (
     RunState,
     RunStatus,
@@ -34,6 +38,7 @@ from local_dev_agent.models import (
     ToolResultBlock,
     ToolUseBlock,
 )
+from local_dev_agent.memory import MemoryLoader, MemoryRequestContext
 from local_dev_agent.storage.ports import StateRepository
 from local_dev_agent.storage.conversation_ports import ConversationRepository
 from local_dev_agent.todos import TodoReminderPolicy
@@ -80,6 +85,7 @@ class MinimalAgentLoop:
         system_prompt: str | None = None,
         todo_reminder_policy: TodoReminderPolicy | None = None,
         context_manager: ContextManager | None = None,
+        memory_loader: MemoryLoader | None = None,
     ) -> None:
         if max_turns < 1:
             raise ValueError("Agent Loop 的最大模型调用轮次必须大于或等于 1。")
@@ -87,6 +93,8 @@ class MinimalAgentLoop:
             not isinstance(system_prompt, str) or not system_prompt.strip()
         ):
             raise ValueError("Agent Loop 的系统提示必须是非空字符串。")
+        if memory_loader is not None and not hasattr(memory_loader, "load"):
+            raise ValueError("memory_loader 必须提供 load 方法。")
         self._repository = repository
         self._model = model
         self._registry = registry or ToolRegistry()
@@ -97,6 +105,7 @@ class MinimalAgentLoop:
         self._system_prompt = system_prompt
         self._todo_reminder_policy = todo_reminder_policy
         self._context_manager = context_manager
+        self._memory_loader = memory_loader
 
     def execute(
         self,
@@ -131,6 +140,12 @@ class MinimalAgentLoop:
             prompt=start.event.content,
             log_context=log_context,
         )
+        memory_context = self._load_memory_context(
+            session_id=start.session.session_id,
+            run_id=running_run.run_id,
+            query=start.event.content,
+            log_context=log_context,
+        )
         force_context_compaction_next = False
 
         for turn_number in range(1, self._max_turns + 1):
@@ -140,6 +155,7 @@ class MinimalAgentLoop:
                 conversation=tuple(conversation),
                 log_context=log_context,
                 force_history_compaction=force_context_compaction_next,
+                context_enricher=memory_context,
             )
             force_context_compaction_next = False
             assistant_message = ModelMessage(
@@ -342,6 +358,7 @@ class MinimalAgentLoop:
         conversation: tuple[ModelMessage, ...],
         log_context: dict[str, str],
         force_history_compaction: bool = False,
+        context_enricher: ContextInputSnapshotEnricher | None = None,
     ) -> ModelResponse:
         logger.info("开始模型调用。", extra=log_context)
         system_prompt = self._request_system_prompt()
@@ -358,6 +375,7 @@ class MinimalAgentLoop:
                 self._build_model_request(
                     snapshot,
                     force_history_compaction=force_history_compaction,
+                    context_enricher=context_enricher,
                 )
             )
         except ModelContextWindowExceededError:
@@ -370,6 +388,7 @@ class MinimalAgentLoop:
                     self._build_model_request(
                         snapshot,
                         force_history_compaction=True,
+                        context_enricher=context_enricher,
                     )
                 )
             except Exception:
@@ -386,6 +405,7 @@ class MinimalAgentLoop:
         snapshot: ContextInputSnapshot,
         *,
         force_history_compaction: bool = False,
+        context_enricher: ContextInputSnapshotEnricher | None = None,
     ) -> ModelRequest:
         """仅从完整内存历史派生 Provider 请求，避免重试污染 Conversation Transcript。"""
 
@@ -396,10 +416,16 @@ class MinimalAgentLoop:
             context_package = self._context_manager.prepare(
                 snapshot,
                 force_history_compaction=force_history_compaction,
+                context_enricher=context_enricher,
             )
             messages = context_package.snapshot.messages
             tools = context_package.snapshot.tools
             system_prompt = context_package.snapshot.system_prompt
+        elif context_enricher is not None:
+            enriched_snapshot = context_enricher.enrich(snapshot)
+            messages = enriched_snapshot.messages
+            tools = enriched_snapshot.tools
+            system_prompt = enriched_snapshot.system_prompt
         return ModelRequest.from_messages(
             session_id=snapshot.session_id,
             run_id=snapshot.run_id,
@@ -407,6 +433,34 @@ class MinimalAgentLoop:
             tools=tools,
             system_prompt=system_prompt,
         )
+
+    def _load_memory_context(
+        self,
+        *,
+        session_id: str,
+        run_id: str,
+        query: str,
+        log_context: dict[str, str],
+    ) -> MemoryRequestContext | None:
+        """在每个父 Agent Run 开始时选择一次记忆；异常不阻断用户任务。"""
+
+        if self._memory_loader is None:
+            return None
+        try:
+            return MemoryRequestContext(
+                self._memory_loader.load(
+                    session_id=session_id,
+                    run_id=run_id,
+                    query=query,
+                )
+            )
+        except Exception:
+            logger.warning(
+                "长期记忆加载失败，不影响模型调用。",
+                exc_info=True,
+                extra=log_context,
+            )
+            return None
 
     def _requested_context_compaction(
         self,

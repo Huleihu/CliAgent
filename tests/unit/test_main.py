@@ -5,6 +5,7 @@ from local_dev_agent.domain.state import SessionState
 from local_dev_agent.hooks import HookDecision, HookEvent, PreToolUseContext
 from local_dev_agent.main import create_permission_hook_runner
 from local_dev_agent.main import create_context_manager
+from local_dev_agent.main import create_memory_loader
 from local_dev_agent.main import create_subagent_runner
 from local_dev_agent.main import create_tool_registry
 from local_dev_agent.main import default_workspace
@@ -81,6 +82,15 @@ def test_create_context_manager_assembles_the_s8_pipeline(tmp_path) -> None:
     )
 
     assert isinstance(manager, ContextManager)
+
+
+def test_create_memory_loader_uses_the_workspace_memory_root(tmp_path) -> None:
+    loader = create_memory_loader(
+        workspace=tmp_path,
+        model=FakeModel(ModelResponse.text_completion("不会调用。")),
+    )
+
+    assert loader.load(session_id="session-1", run_id="run-1", query="检查状态。").catalog.entries == ()
 
 
 def test_create_context_manager_persists_rebuilt_checkpoints_under_the_cli_state_root(

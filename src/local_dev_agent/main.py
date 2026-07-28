@@ -20,6 +20,11 @@ from local_dev_agent.domain.messages import UserInputEvent
 from local_dev_agent.domain.state import SessionState
 from local_dev_agent.hooks import HookEvent, HookRegistry, HookRunner
 from local_dev_agent.models import DeepSeekAnthropicModelClient, DeepSeekSettings, ModelClient
+from local_dev_agent.memory import (
+    FileSystemMemoryRepository,
+    MemoryLoader,
+    ModelMemorySelector,
+)
 from local_dev_agent.observability import configure_logging
 from local_dev_agent.permissions import PermissionHook, SimplePermissionPolicy
 from local_dev_agent.runtime import MinimalAgentLoop, UserInputRuntimeService
@@ -170,6 +175,15 @@ def create_context_manager(
     )
 
 
+def create_memory_loader(*, workspace: Path, model: ModelClient) -> MemoryLoader:
+    """组装工作区级长期记忆加载器；目录为空时不会发起选择模型调用。"""
+
+    return MemoryLoader(
+        FileSystemMemoryRepository(workspace / "var" / "memory"),
+        ModelMemorySelector(model),
+    )
+
+
 def create_subagent_runner(
     *,
     repository: StateRepository,
@@ -238,6 +252,7 @@ def main() -> None:
             model=model,
             max_output_tokens=settings.max_tokens,
         ),
+        memory_loader=create_memory_loader(workspace=workspace, model=model),
     )
 
     print("Local Dev Agent")

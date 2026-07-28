@@ -29,6 +29,13 @@ from local_dev_agent.hooks import (
     UserPromptSubmitContext,
 )
 from local_dev_agent.models import ModelContextWindowExceededError
+from local_dev_agent.memory import (
+    KeywordMemorySelector,
+    MemoryCatalog,
+    MemoryEntry,
+    MemoryLoader,
+    MemoryType,
+)
 from local_dev_agent.models.fake import FakeModel
 from local_dev_agent.models.ports import (
     MessageRole,
@@ -184,6 +191,16 @@ class RecordingStopHook:
         return HookResult.block("停止后续收尾审计。")
 
 
+class MemoryCatalogRepository:
+    """为父 Agent 记忆注入测试提供固定目录快照。"""
+
+    def __init__(self, catalog: MemoryCatalog) -> None:
+        self._catalog = catalog
+
+    def list_entries(self) -> MemoryCatalog:
+        return self._catalog
+
+
 def test_minimal_agent_loop_completes_a_text_response_and_persists_states(
     tmp_path,
 ) -> None:
@@ -225,6 +242,62 @@ def test_minimal_agent_loop_completes_a_text_response_and_persists_states(
         RunStatus.RUNNING,
         RunStatus.COMPLETED,
     ]
+
+
+def test_minimal_agent_loop_injects_memory_without_persisting_derived_content(tmp_path) -> None:
+    timestamp = datetime(2026, 7, 28, 9, 0, tzinfo=timezone.utc)
+    repository = JsonFileStateRepository(tmp_path / "state")
+    conversation_repository = JsonFileConversationRepository(tmp_path / "state")
+    session = SessionState.create(
+        session_id="session-1",
+        tenant_id="tenant-1",
+        user_id="user-1",
+        project_id="project-1",
+        created_at=timestamp,
+    )
+    repository.save_session(session)
+    start = UserInputRuntimeService(repository).handle(
+        UserInputEvent.create(
+            session_id=session.session_id,
+            content="继续认证重构。",
+            occurred_at=timestamp,
+        )
+    )
+    memory_loader = MemoryLoader(
+        MemoryCatalogRepository(
+            MemoryCatalog(
+                entries=(
+                    MemoryEntry(
+                        "project-auth",
+                        MemoryType.PROJECT,
+                        "认证重构由合规驱动",
+                        "保留审批和审计链路。",
+                    ),
+                )
+            )
+        ),
+        KeywordMemorySelector(),
+    )
+    model = FakeModel(ModelResponse.text_completion("已继续处理认证重构。"))
+
+    MinimalAgentLoop(
+        repository,
+        model,
+        conversation_repository=conversation_repository,
+        system_prompt="基础系统提示。",
+        memory_loader=memory_loader,
+    ).execute(start, occurred_at=timestamp)
+
+    assert "project-auth" in model.requests[0].system_prompt  # type: ignore[operator]
+    assert model.requests[0].conversation[0].content == (
+        TextBlock(
+            "<relevant_memories>\n\n## project-auth\n"
+            "保留审批和审计链路。\n\n</relevant_memories>\n\n继续认证重构。"
+        ),
+    )
+    assert conversation_repository.get_messages(session.session_id)[0].content == (
+        TextBlock("继续认证重构。"),
+    )
 
 
 def test_minimal_agent_loop_passes_system_prompt_without_persisting_it(tmp_path) -> None:
