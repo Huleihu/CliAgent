@@ -16,3 +16,6 @@ class MemoryRepository(Protocol):
 
     def save(self, entry: MemoryEntry) -> MemoryEntry:
         """原子替换单条记忆，并同步重建长期记忆索引。"""
+
+    def replace_all(self, catalog: MemoryCatalog) -> MemoryCatalog:
+        """以已验证的完整目录替换当前条目集合，并重建索引。"""

@@ -39,6 +39,7 @@ from local_dev_agent.models import (
     ToolUseBlock,
 )
 from local_dev_agent.memory import (
+    MemoryConsolidationService,
     MemoryExtractionService,
     MemoryLoader,
     MemoryRequestContext,
@@ -91,6 +92,7 @@ class MinimalAgentLoop:
         context_manager: ContextManager | None = None,
         memory_loader: MemoryLoader | None = None,
         memory_extraction_service: MemoryExtractionService | None = None,
+        memory_consolidation_service: MemoryConsolidationService | None = None,
     ) -> None:
         if max_turns < 1:
             raise ValueError("Agent Loop 的最大模型调用轮次必须大于或等于 1。")
@@ -117,6 +119,7 @@ class MinimalAgentLoop:
         self._context_manager = context_manager
         self._memory_loader = memory_loader
         self._memory_extraction_service = memory_extraction_service
+        self._memory_consolidation_service = memory_consolidation_service
 
     def execute(
         self,
@@ -245,6 +248,11 @@ class MinimalAgentLoop:
                 session_id=start.session.session_id,
                 run_id=running_run.run_id,
                 messages=tuple(conversation[run_message_start:]),
+                log_context=log_context,
+            )
+            self._consolidate_memories(
+                session_id=start.session.session_id,
+                run_id=running_run.run_id,
                 log_context=log_context,
             )
             completed_run = running_run.transition_to(
@@ -504,6 +512,16 @@ class MinimalAgentLoop:
                 exc_info=True,
                 extra=log_context,
             )
+
+    def _consolidate_memories(self, *, session_id: str, run_id: str, log_context: dict[str, str]) -> None:
+        """低频整理失败不影响已完成的用户任务。"""
+
+        if self._memory_consolidation_service is None:
+            return
+        try:
+            self._memory_consolidation_service.consolidate_if_needed(session_id=session_id, run_id=run_id)
+        except Exception:
+            logger.warning("长期记忆整理失败，不影响运行完成。", exc_info=True, extra=log_context)
 
     def _requested_context_compaction(
         self,

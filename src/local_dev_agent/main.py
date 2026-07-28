@@ -23,8 +23,10 @@ from local_dev_agent.models import DeepSeekAnthropicModelClient, DeepSeekSetting
 from local_dev_agent.memory import (
     FileSystemMemoryRepository,
     MemoryExtractionService,
+    MemoryConsolidationService,
     MemoryLoader,
     ModelMemoryExtractor,
+    ModelMemoryConsolidator,
     ModelMemorySelector,
 )
 from local_dev_agent.observability import configure_logging
@@ -199,6 +201,15 @@ def create_memory_extraction_service(
     )
 
 
+def create_memory_consolidation_service(*, workspace: Path, model: ModelClient) -> MemoryConsolidationService:
+    """组装按数量阈值低频触发的工作区长期记忆整理服务。"""
+
+    return MemoryConsolidationService(
+        FileSystemMemoryRepository(workspace / "var" / "memory"),
+        ModelMemoryConsolidator(model),
+    )
+
+
 def create_subagent_runner(
     *,
     repository: StateRepository,
@@ -269,6 +280,10 @@ def main() -> None:
         ),
         memory_loader=create_memory_loader(workspace=workspace, model=model),
         memory_extraction_service=create_memory_extraction_service(
+            workspace=workspace,
+            model=model,
+        ),
+        memory_consolidation_service=create_memory_consolidation_service(
             workspace=workspace,
             model=model,
         ),

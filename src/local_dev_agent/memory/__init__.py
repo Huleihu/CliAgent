@@ -2,6 +2,12 @@
 
 from .errors import CorruptedMemoryFileError, MemoryFrontmatterError
 from .context import MEMORY_CATALOG_SYSTEM_PROMPT, MemoryRequestContext
+from .consolidation import (
+    MEMORY_CONSOLIDATION_SYSTEM_PROMPT,
+    MemoryConsolidationPolicy,
+    MemoryConsolidationService,
+    ModelMemoryConsolidator,
+)
 from .extraction import (
     MEMORY_EXTRACTION_SYSTEM_PROMPT,
     MemoryExtractionRequest,
@@ -25,6 +31,8 @@ __all__ = [
     "CorruptedMemoryFileError",
     "FileSystemMemoryRepository",
     "MemoryCatalog",
+    "MemoryConsolidationPolicy",
+    "MemoryConsolidationService",
     "MemoryEntry",
     "MemoryExtractionRequest",
     "MemoryExtractionService",
@@ -39,10 +47,12 @@ __all__ = [
     "MemorySelector",
     "MemoryType",
     "MEMORY_CATALOG_SYSTEM_PROMPT",
+    "MEMORY_CONSOLIDATION_SYSTEM_PROMPT",
     "MEMORY_EXTRACTION_SYSTEM_PROMPT",
     "KeywordMemorySelector",
     "ModelMemorySelector",
     "ModelMemoryExtractor",
+    "ModelMemoryConsolidator",
     "format_memory_catalog",
     "parse_memory_document",
     "render_memory_document",

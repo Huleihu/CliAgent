@@ -56,6 +56,22 @@ class FileSystemMemoryRepository:
         self._write_text_atomically(self._index_path, self._render_index(self.list_entries()))
         return entry
 
+    def replace_all(self, catalog: MemoryCatalog) -> MemoryCatalog:
+        """先持久化完整新集合，再移除旧文件，降低整理中断的丢失风险。"""
+
+        if not isinstance(catalog, MemoryCatalog):
+            raise TypeError("catalog 必须是 MemoryCatalog 对象。")
+        current_ids = {entry.memory_id for entry in self.list_entries().entries}
+        next_ids = {entry.memory_id for entry in catalog.entries}
+        for entry in catalog.entries:
+            self._write_text_atomically(self._path_for(entry.memory_id), render_memory_document(entry))
+        for memory_id in current_ids - next_ids:
+            path = self._path_for(memory_id)
+            if path.exists():
+                path.unlink()
+        self._write_text_atomically(self._index_path, self._render_index(catalog))
+        return catalog
+
     @property
     def _index_path(self) -> Path:
         return self._root_directory / self._INDEX_FILENAME
