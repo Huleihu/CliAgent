@@ -45,6 +45,7 @@
 - 已完成 S8 版本化历史摘要检查点的第 2 个教学式小步：新增 `HistorySummaryCheckpointRepository` 端口和 `JsonFileHistorySummaryCheckpointRepository`，按会话独立保存 `history-summary-checkpoints/<session>.json`。检查点 JSON 带实体类型和版本，写入使用同目录临时文件、`fsync` 与原子替换；文件缺失返回空，损坏 JSON、未知版本、非法字段、会话标识不匹配和路径越界均以中文错误拒绝，替换失败不会破坏既有检查点。当前尚未组合摘要与尾部消息，亦未接入 `ContextManager`/Runtime。
 - 已完成 S8 版本化历史摘要检查点的第 3 个教学式小步：新增检查点派生视图、重建端口与协调服务。消息级组合函数负责验证检查点并生成“摘要消息 + 检查点后原始尾部”；`ContextInputSnapshot` 薄封装仅保留 Session、Run、系统提示和工具声明后装入新消息。不存在检查点时完整快照原样返回，来源不一致仍显式拒绝。`FullHistorySummaryCheckpointRebuilder` 只从传入的完整原始 `ContextInputSnapshot` 的安全前缀生成新摘要，随后由服务保存检查点，绝不将旧摘要与尾部再次摘要。当前尚未接入 `ContextManager`/Runtime。
 - 已完成 S8 版本化历史摘要检查点的第 4 个教学式小步：`ContextManager` 现先恢复有效检查点视图，再执行既有 Artifact、L1、L2 和预算；若预处理后仍超预算，或由模型主动 `compact`/Provider 超限应急重试强制压缩，则仅从最初的完整原始快照重建并原子保存检查点，再对“新摘要 + 原始尾部”重新预处理和估算。CLI 组合根对长历史默认保留最近 10 条原始尾部消息，短历史则整体摘要；检查点保存到 `workspace/var/state/history-summary-checkpoints/`。Runtime 端到端测试确认模型接收检查点视图而 Conversation Transcript 仍只追加完整原始消息。S8 后续性能优化的版本化历史摘要检查点闭环已完成。
+- 已完成 `learnClaude/s09_memory` 的第 1 个教学式小步：新增独立 `local_dev_agent.memory` 包，以不可变 `MemoryType`、`MemoryEntry` 与 `MemoryCatalog` 表示长期记忆的类型、受控 kebab-case 标识、单行索引描述和完整正文；新增 `MemoryRepository` 与 `FileSystemMemoryRepository`，将每条记忆保存为独立 Markdown + YAML frontmatter，并从全部条目稳定重建 `MEMORY.md` 索引。条目文件和索引均使用同目录临时文件、`fsync` 与原子替换；目录缺失返回空快照，frontmatter、UTF-8、文件名与标识不匹配、目录越界或重复标识均以中文错误拒绝。当前尚未实现记忆选择、模型注入、运行后提取、整理或 CLI/Runtime 装配。
 - 使用 Conda 环境 `local-dev-agent`（Python 3.13）。
 
 ## 已完成
@@ -69,6 +70,7 @@
 - 新增共享时间规范化模块，统一 Run 与 Step 的 UTC 转换和无时区时间拒绝规则；`RunState` 的外部行为保持不变。
 - 添加 Step 状态机单元测试，覆盖成功、等待恢复、不确定结果协调、非法跳转、终态保护、不可变性、中文错误信息与尝试次数校验。
 - 更新 `AGENTS.md`：每个已验证且边界清晰的教学式小步完成后，主动提醒用户可以提交并提供建议提交信息；未经用户明确要求不自动提交。
+- 更新 `AGENTS.md`：每个教学式小步完成后，主动说明本次文件的推荐阅读顺序、各文件阅读目标与衔接关系，帮助用户按“契约 → 实现 → 装配 → 测试”理解改动。
 - 实现 `SessionState`、`SessionStatus` 与会话生命周期迁移历史，覆盖 `created → active ↔ suspended → archived`，以及等待人工处理的 `corrupted`、`needs_migration` 终态。
 - 建立 `Session → Run → Step` 的状态关联边界：Session 仅保存 `active_run_id`，Run 继续通过 `session_id` 归属会话，Step 继续通过 `run_id` 归属运行；完整 Run 历史留给后续 Repository 查询，避免重复快照状态。
 - 添加会话状态机单元测试，覆盖会话生命周期、顺序关联多个 Run、活跃 Run 排他性、活跃 Run 与会话迁移互斥、非法跳转、终态保护、不可变性与中文时间校验。
@@ -179,7 +181,7 @@
 - `anthropic`、`python-dotenv`、`pytest` 可在 Conda 环境中导入。
 - `ruff` 可运行。
 - 已人工核对 `TDD.md` 与 `AGENT_REQUIREMENTS_CHECKLIST.txt` 的 S01–S30 覆盖关系；本次仅修改文档，未运行代码测试。
-- `python -m pytest`：418 passed（覆盖状态机、JSON 文件状态仓储、会话 Transcript、最小内部事件协议、Runtime 输入编排、内容块模型协议、有界 Agent Loop、统一 logging、受控工具框架、DeepSeek Provider、多轮工具调用闭环、最小交互式启动入口、读写编辑文件工具、Hook 核心闭环、S3 简单权限策略、S5 待办领域契约、JSON Todo 仓储、TodoWrite 工具闭环、Todo 规划系统提示与临时 reminder、完整 S6 同步子 Agent 闭环、完整 S7 Skill Loading 闭环，以及 S8 上下文预算、Artifact 化、L1/L2 结构压缩、L4 摘要、模型调用前上下文装配、Provider 上下文超限异常边界、单次应急压缩重试、模型主动 `compact` 请求、受控 Artifact 分段读取，以及版本化历史摘要检查点契约、原子 JSON 仓储、消息级摘要尾部派生视图、完整历史重建、短历史整体摘要策略与 ContextManager/CLI/Runtime 接入）。
+- `python -m pytest`：436 passed（覆盖状态机、JSON 文件状态仓储、会话 Transcript、最小内部事件协议、Runtime 输入编排、内容块模型协议、有界 Agent Loop、统一 logging、受控工具框架、DeepSeek Provider、多轮工具调用闭环、最小交互式启动入口、读写编辑文件工具、Hook 核心闭环、S3 简单权限策略、S5 待办领域契约、JSON Todo 仓储、TodoWrite 工具闭环、Todo 规划系统提示与临时 reminder、完整 S6 同步子 Agent 闭环、完整 S7 Skill Loading 闭环、S8 上下文预算与版本化历史摘要检查点闭环，以及 S9 长期记忆领域契约、Markdown frontmatter 与原子文件仓储）。
 - `python -m ruff check src tests`：通过。
 
 ## 下一步
