@@ -4,6 +4,7 @@ import pytest
 
 from local_dev_agent.system_prompt import (
     CachedSystemPromptAssembler,
+    ContextualSystemPromptProvider,
     SystemPromptContext,
     SystemPromptSection,
 )
@@ -123,3 +124,31 @@ def test_assembler_rejects_duplicate_section_names() -> None:
 
     with pytest.raises(ValueError, match="系统提示 section 名称不能重复"):
         CachedSystemPromptAssembler((section, section))
+
+
+def test_contextual_provider_reads_the_current_context_before_using_the_cache() -> None:
+    contexts = iter(
+        (
+            SystemPromptContext.create(workspace="C:/first"),
+            SystemPromptContext.create(workspace="C:/second"),
+        )
+    )
+    provider = ContextualSystemPromptProvider(
+        CachedSystemPromptAssembler(
+            (SystemPromptSection("workspace", lambda context: f"工作区：{context.workspace}"),)
+        ),
+        lambda: next(contexts),
+    )
+
+    assert provider.get_system_prompt() == "工作区：C:/first"
+    assert provider.get_system_prompt() == "工作区：C:/second"
+
+
+def test_contextual_provider_rejects_an_invalid_context_factory_result() -> None:
+    provider = ContextualSystemPromptProvider(
+        CachedSystemPromptAssembler(()),
+        lambda: "错误上下文",  # type: ignore[arg-type]
+    )
+
+    with pytest.raises(TypeError, match="context_factory 必须返回 SystemPromptContext 对象"):
+        provider.get_system_prompt()

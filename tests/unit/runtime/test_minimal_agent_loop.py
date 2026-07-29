@@ -92,6 +92,22 @@ class ScriptedModel:
         return response
 
 
+class RecordingSystemPromptProvider:
+    """按顺序提供动态系统提示，并记录每次模型调用前的读取。"""
+
+    def __init__(self, prompts: tuple[str | None, ...]) -> None:
+        self._prompts = list(prompts)
+        self.calls = 0
+
+    def get_system_prompt(self) -> str | None:
+        """返回下一条预设提示，模拟真实运行时状态更新。"""
+
+        self.calls += 1
+        if not self._prompts:
+            raise AssertionError("测试系统提示提供器没有更多预设提示。")
+        return self._prompts.pop(0)
+
+
 class RecordingSummarizer:
     """记录 Runtime 请求的应急摘要来源，并返回稳定摘要。"""
 
@@ -380,6 +396,89 @@ def test_minimal_agent_loop_passes_system_prompt_without_persisting_it(tmp_path)
         for block in message.content
         if isinstance(block, TextBlock)
     )
+
+
+def test_minimal_agent_loop_reads_the_dynamic_system_prompt_before_each_model_turn(tmp_path) -> None:
+    timestamp = datetime(2026, 7, 29, 9, 0, tzinfo=timezone.utc)
+    repository = JsonFileStateRepository(tmp_path / "state")
+    conversation_repository = JsonFileConversationRepository(tmp_path / "state")
+    session = SessionState.create(
+        session_id="session-1",
+        tenant_id="tenant-1",
+        user_id="user-1",
+        project_id="project-1",
+        created_at=timestamp,
+    )
+    repository.save_session(session)
+    start = UserInputRuntimeService(repository).handle(
+        UserInputEvent.create(
+            session_id=session.session_id,
+            content="读取项目说明。",
+            occurred_at=timestamp,
+        )
+    )
+    registry = ToolRegistry()
+    registry.register(
+        FakeTool(
+            definition=ToolDefinition(
+                name="read_file",
+                description="读取文本文件。",
+                parameters={
+                    "type": "object",
+                    "properties": {"path": {"type": "string"}},
+                    "required": ["path"],
+                },
+            ),
+            result={"content": "项目说明"},
+        )
+    )
+    model = ScriptedModel(
+        (
+            ModelResponse(
+                stop_reason=StopReason.TOOL_USE,
+                content=(
+                    ToolUseBlock(
+                        tool_use_id="toolu-1",
+                        name="read_file",
+                        input={"path": "README.md"},
+                    ),
+                ),
+            ),
+            ModelResponse.text_completion("项目说明已读取。"),
+        )
+    )
+    provider = RecordingSystemPromptProvider(("第一轮提示。", "第二轮提示。"))
+
+    result = MinimalAgentLoop(
+        repository,
+        model,
+        registry,
+        conversation_repository,
+        system_prompt_provider=provider,
+    ).execute(start, occurred_at=timestamp)
+
+    assert result.response.text == "项目说明已读取。"
+    assert provider.calls == 2
+    assert [request.system_prompt for request in model.requests] == [
+        "第一轮提示。",
+        "第二轮提示。",
+    ]
+    assert all(
+        "第一轮提示。" not in block.text and "第二轮提示。" not in block.text
+        for message in conversation_repository.get_messages(session.session_id)
+        for block in message.content
+        if isinstance(block, TextBlock)
+    )
+
+
+def test_minimal_agent_loop_rejects_ambiguous_static_and_dynamic_system_prompts(tmp_path) -> None:
+    with pytest.raises(ValueError, match="不能同时配置静态系统提示和系统提示提供器"):
+        MinimalAgentLoop(
+            JsonFileStateRepository(tmp_path / "state"),
+            FakeModel(ModelResponse.text_completion("不会调用。")),
+            system_prompt="静态提示。",
+            system_prompt_provider=RecordingSystemPromptProvider(("动态提示。",)),
+        )
 
 
 def test_minimal_agent_loop_injects_a_transient_todo_reminder_after_three_tool_turns(

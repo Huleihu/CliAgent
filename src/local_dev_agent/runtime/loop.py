@@ -44,6 +44,7 @@ from local_dev_agent.memory import (
     MemoryLoader,
     MemoryRequestContext,
 )
+from local_dev_agent.system_prompt import SystemPromptProvider
 from local_dev_agent.storage.ports import StateRepository
 from local_dev_agent.storage.conversation_ports import ConversationRepository
 from local_dev_agent.todos import TodoReminderPolicy
@@ -88,6 +89,7 @@ class MinimalAgentLoop:
         max_turns: int = 10,
         hook_runner: HookRunner | None = None,
         system_prompt: str | None = None,
+        system_prompt_provider: SystemPromptProvider | None = None,
         todo_reminder_policy: TodoReminderPolicy | None = None,
         context_manager: ContextManager | None = None,
         memory_loader: MemoryLoader | None = None,
@@ -100,6 +102,13 @@ class MinimalAgentLoop:
             not isinstance(system_prompt, str) or not system_prompt.strip()
         ):
             raise ValueError("Agent Loop 的系统提示必须是非空字符串。")
+        if system_prompt is not None and system_prompt_provider is not None:
+            raise ValueError("Agent Loop 不能同时配置静态系统提示和系统提示提供器。")
+        if system_prompt_provider is not None and not hasattr(
+            system_prompt_provider,
+            "get_system_prompt",
+        ):
+            raise ValueError("system_prompt_provider 必须提供 get_system_prompt 方法。")
         if memory_loader is not None and not hasattr(memory_loader, "load"):
             raise ValueError("memory_loader 必须提供 load 方法。")
         if memory_extraction_service is not None and not hasattr(
@@ -115,6 +124,7 @@ class MinimalAgentLoop:
         self._executor = ToolExecutor(self._registry, hook_runner=hook_runner)
         self._max_turns = max_turns
         self._system_prompt = system_prompt
+        self._system_prompt_provider = system_prompt_provider
         self._todo_reminder_policy = todo_reminder_policy
         self._context_manager = context_manager
         self._memory_loader = memory_loader
@@ -544,13 +554,20 @@ class MinimalAgentLoop:
     def _request_system_prompt(self) -> str | None:
         """合并稳定系统提示与一次性待办提醒，不写入会话消息。"""
 
+        base_prompt = self._system_prompt
+        if self._system_prompt_provider is not None:
+            base_prompt = self._system_prompt_provider.get_system_prompt()
+            if base_prompt is not None and (
+                not isinstance(base_prompt, str) or not base_prompt.strip()
+            ):
+                raise ValueError("系统提示提供器必须返回非空字符串或 None。")
         reminder = (
             self._todo_reminder_policy.consume_reminder()
             if self._todo_reminder_policy is not None
             else None
         )
         prompt_parts = tuple(
-            prompt for prompt in (self._system_prompt, reminder) if prompt is not None
+            prompt for prompt in (base_prompt, reminder) if prompt is not None
         )
         return "\n\n".join(prompt_parts) if prompt_parts else None
 

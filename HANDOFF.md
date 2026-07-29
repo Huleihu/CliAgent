@@ -52,6 +52,7 @@
 - 已完成 `learnClaude/s09_memory` 的第 5 个教学式小步：新增按条目数量阈值触发的 `MemoryConsolidationPolicy`、无工具 `ModelMemoryConsolidator` 与整理服务；达到默认 10 条时，模型返回完整新目录，仓储先写入新条目、再删除淘汰文件并重建索引。整理在父 Agent 正常结束后、提取之后同步尝试，失败仅记录 WARNING；当前不含后台任务、时间门控或多进程锁。
 - 已完成 `learnClaude/s10_system_prompt` 的第 1 个教学式小步：新增独立 `local_dev_agent.system_prompt` 包，以不可变 `SystemPromptContext`、具名 `SystemPromptSection` 与 `CachedSystemPromptAssembler` 表示运行时 section 选择、稳定顺序组装和最近一次上下文缓存；缓存键使用规范化工具集合与工作区的确定性 JSON 序列化。工具名称仅保留为内部真实状态，供后续决定行为指导 section 是否加载，不会重复写入系统提示；当前尚未接入 CLI、Runtime、S8 或 S9。
 - 已完成 `learnClaude/s10_system_prompt` 的第 2 个教学式小步：新增 CLI 父 Agent 的 section 工厂与工作区/工具目录上下文适配器；身份和工作区 section 始终加载，Todo、委派、压缩和技能目录指导仅在对应能力真实注册时加载。实际工具名称、描述与参数仍只由 Anthropic `tools` 参数声明，新的系统提示不包含工具名；S7 `format_skill_catalog()` 新增向后兼容的可替换说明文字，供 CLI 保持技能目录元数据而不声明加载工具名称。当前尚未接入 `main.py`、`MinimalAgentLoop`、S8 或 S9。
+- 已完成 `learnClaude/s10_system_prompt` 的第 3 个教学式小步：新增 `SystemPromptProvider` 端口与基于上下文工厂的动态实现；`MinimalAgentLoop` 现可选注入提供器，并在每次模型调用前读取当前基础提示。静态 `system_prompt` 接口继续兼容，静态与动态来源同时配置会被拒绝以避免优先级歧义；一次性 Todo reminder 仍只追加到派生模型请求，动态提示也不写入 Transcript。当前 CLI 仍使用旧静态提示，S8 检查点、S9 记忆注入及子 Agent 隔离均未改变。
 - 使用 Conda 环境 `local-dev-agent`（Python 3.13）。
 
 ## 已完成
@@ -187,10 +188,10 @@
 - `anthropic`、`python-dotenv`、`pytest` 可在 Conda 环境中导入。
 - `ruff` 可运行。
 - 已人工核对 `TDD.md` 与 `AGENT_REQUIREMENTS_CHECKLIST.txt` 的 S01–S30 覆盖关系；本次仅修改文档，未运行代码测试。
-- `python -m pytest`：470 passed（覆盖既有 S1-S9 闭环，以及 S10 系统提示 section 组装、缓存和 CLI 条件加载）。
+- `python -m pytest`：474 passed（覆盖既有 S1-S9 闭环，以及 S10 系统提示 section 组装、缓存、CLI 条件加载和 Runtime 动态读取）。
 - `python -m ruff check src tests`：发现 1 个既有错误：`tests/unit/memory/test_consolidation.py:9:59` 的单行分号触发 `E702`；已用 `git show HEAD:...` 确认该行在本步前已存在，新增 S10 文件的定向 Ruff 检查通过。
 
 ## 下一步
 
 - 已完成当前范围的 S8 Context Compact 版本化历史摘要检查点性能优化闭环：完整 Conversation Transcript 始终保持追加式原始历史；检查点独立、版本化、可验证且原子写入，后续模型请求优先使用“检查点摘要 + 原始尾部”，并能从完整历史重建以避免摘要漂移。后续若继续优化，可独立评估 Transcript 的增量存储、检查点校验缓存或更细粒度的重建策略。
-- 继续 S10 第 3 步：为 `MinimalAgentLoop` 增加向后兼容的动态系统提示提供端口，在每次模型调用前取得最新基础提示并保留 Todo reminder 的一次性派生语义；暂不改变 S8/S9 的后续派生顺序。
+- 继续 S10 第 4 步：在 CLI 组合根创建基于工作区、父工具目录和技能启动快照的动态提示提供器，替换旧 `build_cli_system_prompt()` 路径；补充端到端测试，确认父 Agent 使用分段提示、子 Agent 仍保持独立静态提示，且 S8/S9 派生边界不变。
