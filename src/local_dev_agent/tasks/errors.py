@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from .schema import TaskStatus
 
 
@@ -30,3 +32,31 @@ class TaskStateTransitionError(TaskRuleViolationError):
         self.task_id = task_id
         self.action = action
         self.status = status
+
+
+class TaskRepositoryError(ValueError):
+    """任务仓储适配器产生的基础设施错误。"""
+
+
+class CorruptedTaskFileError(TaskRepositoryError):
+    """任务文件无法解析、标识不匹配或结构不受支持时抛出。"""
+
+    def __init__(self, *, path: Path) -> None:
+        super().__init__(f"任务文件“{path}”已损坏或格式不受支持。")
+        self.path = path
+
+
+class TaskAlreadyExistsError(TaskRepositoryError):
+    """新增任务时发现同一稳定标识已存在时抛出。"""
+
+    def __init__(self, *, task_id: str) -> None:
+        super().__init__(f"任务“{task_id}”已存在，不能重复创建。")
+        self.task_id = task_id
+
+
+class TaskNotFoundError(TaskRepositoryError):
+    """替换尚不存在的任务快照时抛出。"""
+
+    def __init__(self, *, task_id: str) -> None:
+        super().__init__(f"任务“{task_id}”不存在。")
+        self.task_id = task_id
