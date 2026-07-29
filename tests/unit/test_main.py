@@ -6,6 +6,7 @@ from local_dev_agent.hooks import HookDecision, HookEvent, PreToolUseContext
 from local_dev_agent.main import create_permission_hook_runner
 from local_dev_agent.main import create_context_manager
 from local_dev_agent.main import create_memory_loader
+from local_dev_agent.main import create_task_service
 from local_dev_agent.main import create_subagent_runner
 from local_dev_agent.main import create_transient_recovery_executor
 from local_dev_agent.main import create_tool_registry
@@ -31,6 +32,7 @@ from local_dev_agent.storage.json_conversation_repository import JsonFileConvers
 from local_dev_agent.storage.json_state_repository import JsonFileStateRepository
 from local_dev_agent.system_prompt import (
     TASK_DELEGATION_SYSTEM_PROMPT,
+    TASK_SYSTEM_PROMPT,
     TODO_PLANNING_SYSTEM_PROMPT,
     create_cli_system_prompt_provider,
 )
@@ -74,9 +76,22 @@ def test_create_tool_registry_registers_the_read_only_file_listing_tool(tmp_path
         "list_files",
         "read_artifact",
         "read_file",
+        "task_claim",
+        "task_complete",
+        "task_create",
+        "task_get",
+        "task_list",
         "todo_write",
         "write_file",
     ]
+
+
+def test_create_task_service_uses_the_workspace_task_state_root(tmp_path) -> None:
+    service = create_task_service(tmp_path)
+
+    task = service.create_task(subject="建立表结构。")
+
+    assert (tmp_path / "var" / "state" / "tasks" / f"{task.task_id}.json").is_file()
 
 
 def test_create_context_manager_assembles_the_s8_pipeline(tmp_path) -> None:
@@ -227,6 +242,12 @@ def test_cli_system_prompt_adds_bounded_task_delegation_guidance() -> None:
     assert "task" not in TASK_DELEGATION_SYSTEM_PROMPT
 
 
+def test_cli_task_system_prompt_distinguishes_project_tasks_from_todo_steps() -> None:
+    assert "跨会话" in TASK_SYSTEM_PROMPT
+    assert "待办清单" in TASK_SYSTEM_PROMPT
+    assert "task_create" not in TASK_SYSTEM_PROMPT
+
+
 class ScriptedModel:
     """按顺序返回父子 Agent 响应，验证 CLI 装配闭环。"""
 
@@ -241,6 +262,74 @@ class ScriptedModel:
         if not self._responses:
             raise AssertionError("测试模型没有更多预设响应。")
         return self._responses.pop(0)
+
+
+def test_cli_composition_registers_task_system_tools_and_returns_persistent_results(
+    tmp_path,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    repository = JsonFileStateRepository(workspace / "var" / "state")
+    conversation_repository = JsonFileConversationRepository(workspace / "var" / "state")
+    session = SessionState.create(
+        session_id="session-parent",
+        tenant_id="local",
+        user_id="local",
+        project_id=str(workspace),
+    )
+    repository.save_session(session)
+    model = ScriptedModel(
+        (
+            ModelResponse(
+                stop_reason=StopReason.TOOL_USE,
+                content=(
+                    ToolUseBlock(
+                        tool_use_id="toolu-task-create",
+                        name="task_create",
+                        input={"subject": "建立表结构。"},
+                    ),
+                ),
+            ),
+            ModelResponse.text_completion("已创建并持久化任务。"),
+        )
+    )
+    catalog = _skill_catalog()
+    registry = create_tool_registry(workspace, skill_catalog=catalog)
+    prompt_provider = create_cli_system_prompt_provider(
+        workspace=workspace,
+        registry=registry,
+        skill_catalog=catalog,
+    )
+    loop = MinimalAgentLoop(
+        repository,
+        model,
+        registry,
+        conversation_repository,
+        hook_runner=create_permission_hook_runner(workspace),
+        system_prompt_provider=prompt_provider,
+    )
+
+    result = execute_prompt(
+        prompt="请记录建立表结构这项工作。",
+        session=session,
+        repository=repository,
+        loop=loop,
+    )
+
+    first_request, follow_up_request = model.requests
+    assert result.response.text == "已创建并持久化任务。"
+    assert TASK_SYSTEM_PROMPT in first_request.system_prompt  # type: ignore[operator]
+    assert {
+        "task_create",
+        "task_list",
+        "task_get",
+        "task_claim",
+        "task_complete",
+    }.issubset(definition.name for definition in first_request.tools)
+    task_result = follow_up_request.conversation[2].content[0].content
+    task_id = task_result["task_id"]
+    assert task_result["status"] == "pending"
+    assert (workspace / "var" / "state" / "tasks" / f"{task_id}.json").is_file()
 
 
 def test_cli_composition_registers_task_and_keeps_it_out_of_child_tools(tmp_path) -> None:
@@ -315,6 +404,11 @@ def test_cli_composition_registers_task_and_keeps_it_out_of_child_tools(tmp_path
     assert "read_artifact" in [definition.name for definition in parent_request.tools]
     assert "load_skill" in [definition.name for definition in parent_request.tools]
     assert "task" not in [definition.name for definition in child_request.tools]
+    assert "task_create" not in [definition.name for definition in child_request.tools]
+    assert "task_list" not in [definition.name for definition in child_request.tools]
+    assert "task_get" not in [definition.name for definition in child_request.tools]
+    assert "task_claim" not in [definition.name for definition in child_request.tools]
+    assert "task_complete" not in [definition.name for definition in child_request.tools]
     assert "todo_write" not in [definition.name for definition in child_request.tools]
     assert "load_skill" not in [definition.name for definition in child_request.tools]
     assert "compact" not in [definition.name for definition in child_request.tools]

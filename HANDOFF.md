@@ -63,6 +63,7 @@
 - 已完成 `learnClaude/s12_task_system` 的第 1 个教学式小步：新增独立 `local_dev_agent.tasks` 纯领域包，以不可变 `TaskStatus`、`Task` 和 `TaskRepository` 表示跨会话任务图节点及其可替换持久化端口。依赖检查、认领和完成均为无副作用的公共规则：缺失或未完成依赖会阻塞认领，生命周期只允许 `pending → in_progress → completed`，认领和完成均返回新快照并保留 owner 以便追溯。本步刻意不实现 JSON 仓储、工具、CLI/系统提示注册、并发锁、环检测、release/unassign 或 Loop 改动。
 - 已完成 `learnClaude/s12_task_system` 的第 2 个教学式小步：新增版本化 JSON 编解码与 `JsonFileTaskRepository`，每个任务按稳定标识独立保存为一个文件；新增、读取、稳定列表和替换均通过 `TaskRepository` 端口提供。写入先 fsync 同目录临时文件再原子替换；重复创建、替换缺失任务、文件损坏、文件名与任务标识不匹配和路径型标识均以中文错误拒绝。本步仍不实现任务工具、CLI/系统提示注册、并发锁、环检测、release/unassign 或 Loop 改动。
 - 已完成 `learnClaude/s12_task_system` 的第 3 个教学式小步：新增 `TaskService` 应用服务与可替换标识生成端口，协调新建、查询、认领、完成、仓储读写和纯领域规则；新增 `task_create`、`task_list`、`task_get`、`task_claim`、`task_complete` 五个内置工具。工具只校验模型参数和序列化结果，依赖检查与 JSON 读写不泄漏到工具层；完成操作仅报告完成前不可认领、完成后可认领的下游任务。当前仍未向 CLI 注册这些工具，也未修改系统提示、并发锁、环检测、release/unassign 或 Loop。
+- 已完成 `learnClaude/s12_task_system` 的第 4 个教学式小步：CLI 组合根现创建工作区级任务仓储、应用服务和 UUID 标识生成器，将五个任务工具注册到父工具目录；任务文件位于 `workspace/var/state/tasks/`。动态系统提示仅在五个任务工具都实际注册时加载任务图指导，明确它与 Todo 清单和 S6 委派的分工；父模型可经既有工具链创建任务并在下一轮收到结构化结果，子 Agent 白名单仍不包含这些工具。未修改 `MinimalAgentLoop`、并发锁、环检测或 release/unassign。
 - 使用 Conda 环境 `local-dev-agent`（Python 3.13）。
 
 ## 已完成
@@ -204,6 +205,7 @@
 - 新增 S12 任务图纯领域契约：`Task` 冻结任务标识、标题、描述、状态、owner 和 `blocked_by` 依赖快照，拒绝空白/重复依赖与 owner、状态不一致；`unresolved_dependency_ids()` 将缺失依赖与未完成依赖统一视为阻塞，`claim_task()` 与 `complete_task()` 只产生新的合法状态快照。新增 `TaskRepository` 结构化端口，暂不绑定 JSON 或其他基础设施。25 项单元测试覆盖契约校验、不可变性、依赖、状态转换、领域错误和端口可替换性。
 - 新增 S12 任务 JSON 适配器：版本化信封明确实体类型与 schema 版本，`blocked_by` 在 JSON 中保存为字符串列表、读取后恢复为不可变元组；`JsonFileTaskRepository` 为每项任务使用独立 JSON 文件，支持跨实例恢复、稳定排序列表、原子写入、重复与缺失状态拒绝、损坏/标识错配文件诊断和路径边界保护。新增 24 项编解码与仓储测试；当前尚未接入领域规则之外的应用服务或工具层。
 - 新增 S12 任务应用服务与五个工具：`TaskService` 通过 `TaskIdGenerator` 创建标识，并按 `blocked_by` 从仓储组装依赖快照后调用既有纯规则；`TaskCompletion` 返回已完成任务及精确的本次解锁下游集合。`task_create`、`task_list`、`task_get`、`task_claim`、`task_complete` 通过既有 `Tool`/`ToolExecutor` 链路提供 JSON 原生结果，未与 S6 父侧 `task` 委派工具重名或耦合。新增 18 项服务与工具测试，覆盖创建、查询、阻塞认领、完成解锁、参数校验和工具名边界。
+- CLI 组合根新增任务图装配：使用 `workspace/var/state/tasks/` 下的 `JsonFileTaskRepository` 与 UUID 标识生成器创建 `TaskService`，父 `ToolRegistry` 注册五个任务图工具；S6 子工具目录保持原白名单，不继承这些能力。系统提示新增条件式任务图指导，只有五个工具全部真实可用时才加载，且不重复暴露工具名称。新增 4 项 CLI/系统提示测试，并扩展既有注册与子 Agent 隔离断言，覆盖注册、任务文件位置、完整能力条件、提示与 Todo 的区别、真实父 Agent 回填和子 Agent 隔离。
 
 ## 验证
 
@@ -223,9 +225,11 @@
 - 使用已获授权的 `python -m pytest` 后，本步完整回归为 591 passed。`python -m ruff check src tests` 仍只报告 `tests/unit/memory/test_consolidation.py:9:59` 的既有 `E702`；新增任务 JSON 编解码和仓储文件的定向 Ruff 检查通过。
 - 本步定向 `python -m ruff check src/local_dev_agent/tasks src/local_dev_agent/tools/builtin tests/unit/tasks tests/unit/tools/test_task_system_tools.py` 通过。使用已获授权的 `python -m pytest tests/unit/tasks tests/unit/tools/test_task_system_tools.py` 后，67 项任务系统与工具测试全部通过。
 - 使用已获授权的 `python -m pytest` 后，本步完整回归为 609 passed。`python -m ruff check src tests` 仍只报告 `tests/unit/memory/test_consolidation.py:9:59` 的既有 `E702`；新增任务服务和工具文件的定向 Ruff 检查通过。
+- 本步定向 `python -m ruff check src/local_dev_agent/main.py src/local_dev_agent/system_prompt src/local_dev_agent/tasks src/local_dev_agent/tools/builtin tests/unit/test_main.py tests/unit/system_prompt/test_cli.py` 通过。常规沙箱的 CLI/提示定向 pytest 因既有 `.pytest-tmp` 清理权限失败；使用已获授权的 `python -m pytest tests/unit/test_main.py tests/unit/system_prompt/test_cli.py` 后，26 项测试全部通过。
+- 使用已获授权的 `python -m pytest` 后，本步完整回归为 613 passed。`python -m ruff check src tests` 仍只报告 `tests/unit/memory/test_consolidation.py:9:59` 的既有 `E702`；新增 CLI、系统提示和任务图装配文件的定向 Ruff 检查通过。
 
 ## 下一步
 
 - 已完成当前范围的 S8 Context Compact 版本化历史摘要检查点性能优化闭环：完整 Conversation Transcript 始终保持追加式原始历史；检查点独立、版本化、可验证且原子写入，后续模型请求优先使用“检查点摘要 + 原始尾部”，并能从完整历史重建以避免摘要漂移。后续若继续优化，可独立评估 Transcript 的增量存储、检查点校验缓存或更细粒度的重建策略。
 - S11 Error Recovery 第 5 步保守的有界纯文本续写已完成；后续若提升为企业级工具恢复，可独立设计“已提交工具调用”协议、`run_id + tool_use_id` 幂等记录、外部副作用权限与崩溃恢复日志，而不放宽当前截断工具调用的拒绝边界。
-- S12 下一步可独立在 CLI 组合根创建 JSON 仓储和应用服务、注册五个任务工具，并添加系统提示中的任务图使用说明；仍通过既有通用工具执行链接入，不修改 `MinimalAgentLoop`。
+- S12 任务图基础闭环已完成：后续若扩展，可独立设计并发文件锁、一般环检测、release/unassign、任务更新、批量操作或与 S13 后台任务的关联；这些能力不应放宽当前 Todo、S6 委派工具和 `MinimalAgentLoop` 的边界。

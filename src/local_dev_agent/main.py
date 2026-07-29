@@ -56,6 +56,11 @@ from local_dev_agent.subagents import (
     SubagentToolRegistryFactory,
     SynchronousSubagentRunner,
 )
+from local_dev_agent.tasks import (
+    JsonFileTaskRepository,
+    TaskService,
+    UuidTaskIdGenerator,
+)
 from local_dev_agent.todos import JsonFileTodoRepository, TodoReminderPolicy
 from local_dev_agent.tools import ToolRegistry
 from local_dev_agent.tools.builtin import (
@@ -66,6 +71,11 @@ from local_dev_agent.tools.builtin import (
     ReadFileTool,
     ReadArtifactTool,
     TaskTool,
+    TaskClaimTool,
+    TaskCompleteTool,
+    TaskCreateTool,
+    TaskGetTool,
+    TaskListTool,
     TodoWriteTool,
     WriteFileTool,
 )
@@ -99,6 +109,7 @@ def create_tool_registry(
     workspace: Path,
     *,
     skill_catalog: SkillCatalog | None = None,
+    task_service: TaskService | None = None,
 ) -> ToolRegistry:
     """组装 CLI 默认可用的低风险工具，避免入口直接依赖工具细节。"""
 
@@ -114,9 +125,24 @@ def create_tool_registry(
     registry.register(
         TodoWriteTool(JsonFileTodoRepository(workspace / "var" / "state" / "todos"))
     )
+    active_task_service = task_service or create_task_service(workspace)
+    registry.register(TaskCreateTool(active_task_service))
+    registry.register(TaskListTool(active_task_service))
+    registry.register(TaskGetTool(active_task_service))
+    registry.register(TaskClaimTool(active_task_service))
+    registry.register(TaskCompleteTool(active_task_service))
     if skill_catalog is not None:
         registry.register(LoadSkillTool(skill_catalog))
     return registry
+
+
+def create_task_service(workspace: Path) -> TaskService:
+    """组装工作区级任务图服务，任务文件独立于会话与 Todo 清单。"""
+
+    return TaskService(
+        JsonFileTaskRepository(workspace / "var" / "state" / "tasks"),
+        UuidTaskIdGenerator(),
+    )
 
 
 def create_permission_hook_runner(workspace: Path) -> HookRunner:
@@ -258,7 +284,12 @@ def main() -> None:
     settings = DeepSeekSettings.from_environment()
     model: ModelClient = DeepSeekAnthropicModelClient(settings)
     skill_catalog = FileSystemSkillCatalogLoader(workspace).load()
-    tool_registry = create_tool_registry(workspace, skill_catalog=skill_catalog)
+    task_service = create_task_service(workspace)
+    tool_registry = create_tool_registry(
+        workspace,
+        skill_catalog=skill_catalog,
+        task_service=task_service,
+    )
     hook_runner = create_permission_hook_runner(workspace)
     subagent_runner = create_subagent_runner(
         repository=repository,

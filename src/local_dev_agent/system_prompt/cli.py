@@ -23,6 +23,10 @@ TODO_PLANNING_SYSTEM_PROMPT = """处理包含多个步骤的任务时，先创�
 
 开始事项、完成事项和完成验证后，及时更新待办状态。简单的单步骤任务无需创建待办清单。"""
 
+TASK_SYSTEM_PROMPT = """跨会话或可由不同执行者接手的项目工作，使用持久任务图管理。
+
+创建任务时明确前置依赖；开始实际工作前先认领未被阻塞的任务，完成后再标记完成。任务图记录项目工作与责任归属，待办清单仍用于当前工作中的细粒度执行步骤。"""
+
 TASK_DELEGATION_SYSTEM_PROMPT = """对于需要独立调查、实现或验证的有界复杂子任务，可使用受控委派能力。
 
 委派只返回结构化结论和关联信息；收到结果后由你验收结论，并在需要时自行验证共享工作区中的副作用。简单任务不要委派。"""
@@ -73,6 +77,21 @@ def create_cli_system_prompt_assembler(
                 "todo",
                 lambda context: TODO_PLANNING_SYSTEM_PROMPT
                 if context.has_tool("todo_write")
+                else None,
+            ),
+            SystemPromptSection(
+                "task_system",
+                lambda context: TASK_SYSTEM_PROMPT
+                if all(
+                    context.has_tool(tool_name)
+                    for tool_name in (
+                        "task_create",
+                        "task_list",
+                        "task_get",
+                        "task_claim",
+                        "task_complete",
+                    )
+                )
                 else None,
             ),
             SystemPromptSection(
