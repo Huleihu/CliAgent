@@ -10,6 +10,7 @@ from local_dev_agent.system_prompt import (
     TODO_PLANNING_SYSTEM_PROMPT,
     create_cli_system_prompt_assembler,
     create_cli_system_prompt_context,
+    create_cli_system_prompt_provider,
 )
 from local_dev_agent.tools import FakeTool, ToolDefinition, ToolRegistry
 
@@ -110,3 +111,29 @@ def test_cli_assembler_reports_an_empty_skill_catalog_only_when_loading_is_avail
     )
 
     assert "当前没有可用技能。" in assembler.get(context)  # type: ignore[operator]
+
+
+def test_cli_provider_rechecks_the_parent_tool_registry_for_each_request(tmp_path) -> None:
+    registry = _registry("todo_write")
+    provider = create_cli_system_prompt_provider(
+        workspace=tmp_path,
+        registry=registry,
+        skill_catalog=_catalog(),
+    )
+
+    first_prompt = provider.get_system_prompt()
+    registry.register(
+        FakeTool(
+            definition=ToolDefinition(
+                name="task",
+                description="测试委派工具。",
+                parameters={"type": "object", "properties": {}},
+            ),
+            result={},
+        )
+    )
+    second_prompt = provider.get_system_prompt()
+
+    assert TASK_DELEGATION_SYSTEM_PROMPT not in first_prompt  # type: ignore[operator]
+    assert TASK_DELEGATION_SYSTEM_PROMPT in second_prompt  # type: ignore[operator]
+    assert "task" not in second_prompt  # type: ignore[operator]

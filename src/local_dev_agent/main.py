@@ -36,7 +36,6 @@ from local_dev_agent.runtime.loop import AgentLoopResult
 from local_dev_agent.skills import (
     FileSystemSkillCatalogLoader,
     SkillCatalog,
-    format_skill_catalog,
 )
 from local_dev_agent.storage.json_state_repository import JsonFileStateRepository
 from local_dev_agent.storage.json_conversation_repository import JsonFileConversationRepository
@@ -45,6 +44,7 @@ from local_dev_agent.storage.json_history_summary_checkpoint_repository import (
 )
 from local_dev_agent.storage.conversation_ports import ConversationRepository
 from local_dev_agent.storage.ports import StateRepository
+from local_dev_agent.system_prompt import create_cli_system_prompt_provider
 from local_dev_agent.subagents import (
     SubagentPolicy,
     SubagentToolRegistryFactory,
@@ -65,28 +65,6 @@ from local_dev_agent.tools.builtin import (
 )
 
 
-TODO_PLANNING_SYSTEM_PROMPT = """你是本地开发 Agent。
-
-处理包含多个步骤的任务时，先使用 todo_write 创建完整待办清单。开始事项时将其标记为 in_progress；完成并验证后标记为 completed。简单的单步骤任务无需创建待办清单。"""
-
-
-TASK_DELEGATION_SYSTEM_PROMPT = """对于需要独立调查、实现或验证的有界复杂子任务，可使用 task 委派给子 Agent。
-
-task 只返回结构化结论和关联信息；收到结果后由你验收结论，并在需要时自行验证共享工作区中的副作用。简单任务不要委派。"""
-
-CONTEXT_COMPACTION_SYSTEM_PROMPT = """当当前历史已冗余或需要切换任务时，可调用 compact 请求 Runtime 在下一轮压缩上下文。
-
-compact 不会修改完整会话历史；不要把它当作文件或消息编辑工具。"""
-
-
-CLI_SYSTEM_PROMPT = (
-    TODO_PLANNING_SYSTEM_PROMPT
-    + "\n\n"
-    + TASK_DELEGATION_SYSTEM_PROMPT
-    + "\n\n"
-    + CONTEXT_COMPACTION_SYSTEM_PROMPT
-)
-
 CLI_CONTEXT_WINDOW_TOKENS = 128_000
 """CLI 首版使用的显式上下文窗口预算，后续可由模型配置替换。"""
 
@@ -95,12 +73,6 @@ CLI_CONTEXT_SAFETY_MARGIN_TOKENS = 13_000
 
 CLI_HISTORY_SUMMARY_CHECKPOINT_TAIL_MESSAGE_COUNT = 10
 """重建历史摘要检查点时保留的最近原始消息数量。"""
-
-
-def build_cli_system_prompt(skill_catalog: SkillCatalog) -> str:
-    """组合稳定 CLI 指导和仅含元数据的启动时技能目录。"""
-
-    return CLI_SYSTEM_PROMPT + "\n\n" + format_skill_catalog(skill_catalog)
 
 
 def execute_prompt(
@@ -271,7 +243,11 @@ def main() -> None:
         tool_registry,
         conversation_repository,
         hook_runner=hook_runner,
-        system_prompt=build_cli_system_prompt(skill_catalog),
+        system_prompt_provider=create_cli_system_prompt_provider(
+            workspace=workspace,
+            registry=tool_registry,
+            skill_catalog=skill_catalog,
+        ),
         todo_reminder_policy=TodoReminderPolicy(),
         context_manager=create_context_manager(
             workspace=workspace,

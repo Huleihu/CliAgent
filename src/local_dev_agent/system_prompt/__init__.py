@@ -13,6 +13,7 @@ from .cli import (
     TODO_PLANNING_SYSTEM_PROMPT,
     create_cli_system_prompt_assembler,
     create_cli_system_prompt_context,
+    create_cli_system_prompt_provider,
 )
 from .ports import SystemPromptProvider
 from .provider import ContextualSystemPromptProvider
@@ -30,4 +31,5 @@ __all__ = [
     "TODO_PLANNING_SYSTEM_PROMPT",
     "create_cli_system_prompt_assembler",
     "create_cli_system_prompt_context",
+    "create_cli_system_prompt_provider",
 ]

@@ -12,6 +12,7 @@ from .assembly import (
     SystemPromptContext,
     SystemPromptSection,
 )
+from .provider import ContextualSystemPromptProvider
 
 
 CLI_IDENTITY_SYSTEM_PROMPT = """你是本地开发 Agent。
@@ -93,4 +94,22 @@ def create_cli_system_prompt_assembler(
                 else None,
             ),
         )
+    )
+
+
+def create_cli_system_prompt_provider(
+    *,
+    workspace: Path,
+    registry: ToolRegistry,
+    skill_catalog: SkillCatalog,
+) -> ContextualSystemPromptProvider:
+    """创建父 Agent 的动态提示提供器，技能目录保持本次启动快照。"""
+
+    assembler = create_cli_system_prompt_assembler(skill_catalog)
+    return ContextualSystemPromptProvider(
+        assembler,
+        lambda: create_cli_system_prompt_context(
+            workspace=workspace,
+            registry=registry,
+        ),
     )

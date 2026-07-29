@@ -10,10 +10,6 @@ from local_dev_agent.main import create_subagent_runner
 from local_dev_agent.main import create_tool_registry
 from local_dev_agent.main import default_workspace
 from local_dev_agent.main import execute_prompt
-from local_dev_agent.main import build_cli_system_prompt
-from local_dev_agent.main import CLI_SYSTEM_PROMPT
-from local_dev_agent.main import TODO_PLANNING_SYSTEM_PROMPT
-from local_dev_agent.main import TASK_DELEGATION_SYSTEM_PROMPT
 from local_dev_agent.models.fake import FakeModel
 from local_dev_agent.context import ContextInputSnapshot, ContextManager
 from local_dev_agent.models.ports import (
@@ -29,6 +25,11 @@ from local_dev_agent.skills import SkillCatalog, SkillDocument, SkillMetadata
 from local_dev_agent.runtime.loop import MinimalAgentLoop
 from local_dev_agent.storage.json_conversation_repository import JsonFileConversationRepository
 from local_dev_agent.storage.json_state_repository import JsonFileStateRepository
+from local_dev_agent.system_prompt import (
+    TASK_DELEGATION_SYSTEM_PROMPT,
+    TODO_PLANNING_SYSTEM_PROMPT,
+    create_cli_system_prompt_provider,
+)
 from local_dev_agent.tools import ToolCallRequest
 from local_dev_agent.tools.builtin import TaskTool
 
@@ -137,12 +138,16 @@ def test_cli_skill_composition_registers_parent_tool_and_keeps_body_out_of_promp
 ) -> None:
     catalog = _skill_catalog()
     registry = create_tool_registry(tmp_path, skill_catalog=catalog)
-    prompt = build_cli_system_prompt(catalog)
+    prompt = create_cli_system_prompt_provider(
+        workspace=tmp_path,
+        registry=registry,
+        skill_catalog=catalog,
+    ).get_system_prompt()
 
     assert "load_skill" in [definition.name for definition in registry.list_definitions()]
-    assert "code-review" in prompt
-    assert "审查代码中的缺陷。" in prompt
-    assert "完整技能正文" not in prompt
+    assert "code-review" in prompt  # type: ignore[operator]
+    assert "审查代码中的缺陷。" in prompt  # type: ignore[operator]
+    assert "完整技能正文" not in prompt  # type: ignore[operator]
 
 
 def test_create_permission_hook_runner_registers_the_s3_policy(tmp_path) -> None:
@@ -171,17 +176,16 @@ def test_default_workspace_is_the_project_sandbox_directory() -> None:
     assert default_workspace() == expected_workspace.resolve()
 
 
-def test_cli_todo_planning_prompt_mentions_the_tool_and_status_updates() -> None:
-    assert "todo_write" in TODO_PLANNING_SYSTEM_PROMPT
-    assert "in_progress" in TODO_PLANNING_SYSTEM_PROMPT
-    assert "completed" in TODO_PLANNING_SYSTEM_PROMPT
+def test_cli_todo_planning_prompt_describes_the_workflow_without_a_tool_name() -> None:
+    assert "待办清单" in TODO_PLANNING_SYSTEM_PROMPT
+    assert "更新待办状态" in TODO_PLANNING_SYSTEM_PROMPT
+    assert "todo_write" not in TODO_PLANNING_SYSTEM_PROMPT
 
 
 def test_cli_system_prompt_adds_bounded_task_delegation_guidance() -> None:
-    assert TODO_PLANNING_SYSTEM_PROMPT in CLI_SYSTEM_PROMPT
-    assert TASK_DELEGATION_SYSTEM_PROMPT in CLI_SYSTEM_PROMPT
-    assert "task" in TASK_DELEGATION_SYSTEM_PROMPT
+    assert "受控委派能力" in TASK_DELEGATION_SYSTEM_PROMPT
     assert "简单任务不要委派" in TASK_DELEGATION_SYSTEM_PROMPT
+    assert "task" not in TASK_DELEGATION_SYSTEM_PROMPT
 
 
 class ScriptedModel:
@@ -244,13 +248,18 @@ def test_cli_composition_registers_task_and_keeps_it_out_of_child_tools(tmp_path
             )
         )
     )
+    prompt_provider = create_cli_system_prompt_provider(
+        workspace=workspace,
+        registry=registry,
+        skill_catalog=catalog,
+    )
     loop = MinimalAgentLoop(
         repository,
         model,
         registry,
         conversation_repository,
         hook_runner=hook_runner,
-        system_prompt=build_cli_system_prompt(catalog),
+        system_prompt_provider=prompt_provider,
     )
 
     result = execute_prompt(
@@ -271,7 +280,7 @@ def test_cli_composition_registers_task_and_keeps_it_out_of_child_tools(tmp_path
     assert "load_skill" not in [definition.name for definition in child_request.tools]
     assert "compact" not in [definition.name for definition in child_request.tools]
     assert "read_artifact" not in [definition.name for definition in child_request.tools]
-    assert child_request.system_prompt != build_cli_system_prompt(catalog)
+    assert child_request.system_prompt != prompt_provider.get_system_prompt()
     assert parent_follow_up.conversation[2].content[0].content["summary"] == (
         "子 Agent 返回 pytest。"
     )
@@ -305,13 +314,18 @@ def test_cli_skill_tool_result_is_returned_to_the_next_parent_model_request(tmp_
         )
     )
     catalog = _skill_catalog()
+    registry = create_tool_registry(workspace, skill_catalog=catalog)
     loop = MinimalAgentLoop(
         repository,
         model,
-        create_tool_registry(workspace, skill_catalog=catalog),
+        registry,
         conversation_repository,
         hook_runner=create_permission_hook_runner(workspace),
-        system_prompt=build_cli_system_prompt(catalog),
+        system_prompt_provider=create_cli_system_prompt_provider(
+            workspace=workspace,
+            registry=registry,
+            skill_catalog=catalog,
+        ),
     )
 
     result = execute_prompt(
