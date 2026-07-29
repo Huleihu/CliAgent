@@ -106,6 +106,7 @@ class ContextManager:
         force_history_compaction: bool = False,
         context_enricher: ContextInputSnapshotEnricher | None = None,
         max_output_tokens: int | None = None,
+        allow_checkpoint_rebuild: bool = True,
     ) -> ContextPackage:
         """按 Artifact 化、L1、L2、预算复算、L4 的顺序装配请求视图。"""
 
@@ -119,6 +120,8 @@ class ContextManager:
             or max_output_tokens < 1
         ):
             raise ValueError("字段“max_output_tokens”必须是正整数。")
+        if not isinstance(allow_checkpoint_rebuild, bool):
+            raise ValueError("字段“allow_checkpoint_rebuild”必须是布尔值。")
         if context_enricher is not None and not hasattr(context_enricher, "enrich"):
             raise ValueError("context_enricher 必须提供 enrich 方法。")
         budget = (
@@ -135,7 +138,10 @@ class ContextManager:
         history_compacted = checkpoint_view is not snapshot
         if force_history_compaction or budget_report.exceeds_budget:
             history_compacted = True
-            if self._history_summary_checkpoint_service is not None:
+            if (
+                self._history_summary_checkpoint_service is not None
+                and allow_checkpoint_rebuild
+            ):
                 rebuilt_view = self._history_summary_checkpoint_service.rebuild_view_from_full_history(
                     snapshot,
                     desired_covered_message_count=self._desired_checkpoint_coverage_count(

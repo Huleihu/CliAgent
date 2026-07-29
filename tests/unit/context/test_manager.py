@@ -225,6 +225,48 @@ def test_context_manager_recalculates_input_budget_for_an_output_budget_override
     assert snapshot.messages[0].content == (TextBlock("甲" * 100),)
 
 
+def test_context_manager_does_not_rebuild_a_checkpoint_for_a_temporary_request(
+    tmp_path: Path,
+) -> None:
+    snapshot = ContextInputSnapshot(
+        session_id="session-1",
+        run_id="run-1",
+        messages=(
+            ModelMessage(
+                role=MessageRole.USER,
+                content=(TextBlock("继续输出。"),),
+            ),
+        ),
+    )
+    checkpoint_repository = InMemoryCheckpointRepository()
+    checkpoint_summarizer = RecordingSummarizer("不应保存。")
+    temporary_summarizer = RecordingSummarizer("临时摘要。")
+    manager = ContextManager(
+        ContextBudget(
+            context_window_tokens=10_000,
+            max_output_tokens=1,
+            safety_margin_tokens=1,
+        ),
+        ToolResultBudgetCompactor(FileSystemToolResultArtifactStore(tmp_path / "artifacts")),
+        HistorySummaryCompactor(temporary_summarizer),
+        history_summary_checkpoint_service=HistorySummaryCheckpointService(
+            checkpoint_repository,
+            FullHistorySummaryCheckpointRebuilder(checkpoint_summarizer),
+        ),
+    )
+
+    package = manager.prepare(
+        snapshot,
+        force_history_compaction=True,
+        allow_checkpoint_rebuild=False,
+    )
+
+    assert package.history_compacted
+    assert checkpoint_repository.saved_checkpoints == []
+    assert checkpoint_summarizer.snapshots == []
+    assert temporary_summarizer.snapshots == [snapshot]
+
+
 def test_context_manager_rejects_a_summary_that_still_exceeds_budget(tmp_path: Path) -> None:
     snapshot = ContextInputSnapshot(
         session_id="session-1",

@@ -11,6 +11,7 @@ from local_dev_agent.main import create_transient_recovery_executor
 from local_dev_agent.main import create_tool_registry
 from local_dev_agent.main import default_workspace
 from local_dev_agent.main import create_output_budget_upgrade_policy
+from local_dev_agent.main import create_output_continuation_policy
 from local_dev_agent.main import execute_prompt
 from local_dev_agent.models.fake import FakeModel
 from local_dev_agent.models import DeepSeekSettings
@@ -115,6 +116,12 @@ def test_create_output_budget_upgrade_policy_uses_the_configured_initial_budget(
     assert policy.initial_max_output_tokens == 8_000
     assert policy.escalated_max_output_tokens == 64_000
     assert policy.can_upgrade
+
+
+def test_create_output_continuation_policy_uses_the_s11_default_limit() -> None:
+    policy = create_output_continuation_policy()
+
+    assert policy.max_continuations == 3
 
 
 def test_create_memory_loader_uses_the_workspace_memory_root(tmp_path) -> None:

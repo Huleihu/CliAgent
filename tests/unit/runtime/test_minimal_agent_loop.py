@@ -35,6 +35,7 @@ from local_dev_agent.models import (
 )
 from local_dev_agent.recovery import (
     OutputBudgetUpgradePolicy,
+    OutputContinuationPolicy,
     TransientModelRecoveryExecutor,
     TransientRecoveryPolicy,
 )
@@ -56,7 +57,11 @@ from local_dev_agent.models.ports import (
     ToolResultBlock,
     ToolUseBlock,
 )
-from local_dev_agent.runtime.errors import AgentLoopExhaustedError
+from local_dev_agent.runtime.errors import (
+    AgentLoopExhaustedError,
+    OutputContinuationExhaustedError,
+    OutputContinuationToolUseError,
+)
 from local_dev_agent.runtime.input_service import UserInputRuntimeService
 from local_dev_agent.runtime.loop import MinimalAgentLoop
 from local_dev_agent.storage.json_state_repository import JsonFileStateRepository
@@ -415,6 +420,200 @@ def test_minimal_agent_loop_escalates_the_first_truncated_output_without_persist
     )
 
 
+def test_minimal_agent_loop_temporarily_continues_only_text_after_an_escalated_truncation(
+    tmp_path,
+) -> None:
+    timestamp = datetime(2026, 7, 29, 9, 11, tzinfo=timezone.utc)
+    repository = JsonFileStateRepository(tmp_path / "state")
+    conversation_repository = JsonFileConversationRepository(tmp_path / "state")
+    session = SessionState.create(
+        session_id="session-1",
+        tenant_id="tenant-1",
+        user_id="user-1",
+        project_id="project-1",
+        created_at=timestamp,
+    )
+    repository.save_session(session)
+    start = UserInputRuntimeService(repository).handle(
+        UserInputEvent.create(
+            session_id=session.session_id,
+            content="生成完整的迁移方案。",
+            occurred_at=timestamp,
+        )
+    )
+    model = ScriptedModel(
+        (
+            ModelResponse(
+                stop_reason=StopReason.MAX_TOKENS,
+                content=(TextBlock("首次截断，不应保留。"),),
+            ),
+            ModelResponse(
+                stop_reason=StopReason.MAX_TOKENS,
+                content=(TextBlock("第一段。"),),
+            ),
+            ModelResponse(
+                stop_reason=StopReason.MAX_TOKENS,
+                content=(TextBlock("第二段。"),),
+            ),
+            ModelResponse.text_completion("第三段。"),
+        )
+    )
+
+    result = MinimalAgentLoop(
+        repository,
+        model,
+        conversation_repository=conversation_repository,
+        output_budget_upgrade_policy=OutputBudgetUpgradePolicy(
+            initial_max_output_tokens=8_000,
+        ),
+        output_continuation_policy=OutputContinuationPolicy(),
+    ).execute(start, occurred_at=timestamp)
+
+    assert result.response.text == "第一段。第二段。第三段。"
+    assert [request.max_output_tokens for request in model.requests] == [
+        None,
+        64_000,
+        64_000,
+        64_000,
+    ]
+    assert model.requests[2].conversation[-2:] == (
+        ModelMessage(
+            role=MessageRole.ASSISTANT,
+            content=(TextBlock("第一段。"),),
+        ),
+        ModelMessage(
+            role=MessageRole.USER,
+            content=(TextBlock(OutputContinuationPolicy().prompt),),
+        ),
+    )
+    assert conversation_repository.get_messages(session.session_id) == (
+        ModelMessage(
+            role=MessageRole.USER,
+            content=(TextBlock("生成完整的迁移方案。"),),
+        ),
+        ModelMessage(
+            role=MessageRole.ASSISTANT,
+            content=(TextBlock("第一段。第二段。第三段。"),),
+        ),
+    )
+
+
+def test_minimal_agent_loop_rejects_truncated_tool_use_without_persisting_or_executing_it(
+    tmp_path,
+) -> None:
+    timestamp = datetime(2026, 7, 29, 9, 12, tzinfo=timezone.utc)
+    repository = JsonFileStateRepository(tmp_path / "state")
+    conversation_repository = JsonFileConversationRepository(tmp_path / "state")
+    session = SessionState.create(
+        session_id="session-1",
+        tenant_id="tenant-1",
+        user_id="user-1",
+        project_id="project-1",
+        created_at=timestamp,
+    )
+    repository.save_session(session)
+    start = UserInputRuntimeService(repository).handle(
+        UserInputEvent.create(
+            session_id=session.session_id,
+            content="生成迁移方案。",
+            occurred_at=timestamp,
+        )
+    )
+    model = ScriptedModel(
+        (
+            ModelResponse(
+                stop_reason=StopReason.MAX_TOKENS,
+                content=(TextBlock("首次截断。"),),
+            ),
+            ModelResponse(
+                stop_reason=StopReason.MAX_TOKENS,
+                content=(
+                    TextBlock("先读取配置。"),
+                    ToolUseBlock(
+                        tool_use_id="toolu-unsafe",
+                        name="read_file",
+                        input={"path": "config.py"},
+                    ),
+                ),
+            ),
+        )
+    )
+
+    with pytest.raises(OutputContinuationToolUseError, match="未执行任何工具"):
+        MinimalAgentLoop(
+            repository,
+            model,
+            conversation_repository=conversation_repository,
+            output_budget_upgrade_policy=OutputBudgetUpgradePolicy(
+                initial_max_output_tokens=8_000,
+            ),
+            output_continuation_policy=OutputContinuationPolicy(),
+        ).execute(start, occurred_at=timestamp)
+
+    assert conversation_repository.get_messages(session.session_id) == (
+        ModelMessage(
+            role=MessageRole.USER,
+            content=(TextBlock("生成迁移方案。"),),
+        ),
+    )
+
+
+def test_minimal_agent_loop_stops_temporary_continuation_after_three_attempts(
+    tmp_path,
+) -> None:
+    timestamp = datetime(2026, 7, 29, 9, 13, tzinfo=timezone.utc)
+    repository = JsonFileStateRepository(tmp_path / "state")
+    conversation_repository = JsonFileConversationRepository(tmp_path / "state")
+    session = SessionState.create(
+        session_id="session-1",
+        tenant_id="tenant-1",
+        user_id="user-1",
+        project_id="project-1",
+        created_at=timestamp,
+    )
+    repository.save_session(session)
+    start = UserInputRuntimeService(repository).handle(
+        UserInputEvent.create(
+            session_id=session.session_id,
+            content="生成迁移方案。",
+            occurred_at=timestamp,
+        )
+    )
+    truncated_response = ModelResponse(
+        stop_reason=StopReason.MAX_TOKENS,
+        content=(TextBlock("仍未完成。"),),
+    )
+    model = ScriptedModel(
+        (
+            ModelResponse(
+                stop_reason=StopReason.MAX_TOKENS,
+                content=(TextBlock("首次截断。"),),
+            ),
+            truncated_response,
+            truncated_response,
+            truncated_response,
+            truncated_response,
+        )
+    )
+
+    with pytest.raises(OutputContinuationExhaustedError, match="最大续写次数“3”"):
+        MinimalAgentLoop(
+            repository,
+            model,
+            conversation_repository=conversation_repository,
+            output_budget_upgrade_policy=OutputBudgetUpgradePolicy(
+                initial_max_output_tokens=8_000,
+            ),
+            output_continuation_policy=OutputContinuationPolicy(),
+        ).execute(start, occurred_at=timestamp)
+
+    assert len(model.requests) == 5
+    assert conversation_repository.get_messages(session.session_id) == (
+        ModelMessage(
+            role=MessageRole.USER,
+            content=(TextBlock("生成迁移方案。"),),
+        ),
+    )
 def test_minimal_agent_loop_switches_to_fallback_after_consecutive_overloads(
     tmp_path,
 ) -> None:

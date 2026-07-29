@@ -33,6 +33,7 @@ from local_dev_agent.observability import configure_logging
 from local_dev_agent.permissions import PermissionHook, SimplePermissionPolicy
 from local_dev_agent.recovery import (
     OutputBudgetUpgradePolicy,
+    OutputContinuationPolicy,
     TransientModelRecoveryExecutor,
     TransientRecoveryPolicy,
 )
@@ -175,6 +176,12 @@ def create_output_budget_upgrade_policy(
     return OutputBudgetUpgradePolicy(initial_max_output_tokens=settings.max_tokens)
 
 
+def create_output_continuation_policy() -> OutputContinuationPolicy:
+    """组装父 Agent 的有界临时纯文本续写策略。"""
+
+    return OutputContinuationPolicy()
+
+
 def create_memory_loader(*, workspace: Path, model: ModelClient) -> MemoryLoader:
     """组装工作区级长期记忆加载器；目录为空时不会发起选择模型调用。"""
 
@@ -289,6 +296,7 @@ def main() -> None:
         ),
         transient_recovery_executor=create_transient_recovery_executor(settings),
         output_budget_upgrade_policy=create_output_budget_upgrade_policy(settings),
+        output_continuation_policy=create_output_continuation_policy(),
     )
 
     print("Local Dev Agent")

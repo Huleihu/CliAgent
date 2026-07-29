@@ -40,6 +40,7 @@ from local_dev_agent.models import (
 )
 from local_dev_agent.recovery import (
     OutputBudgetUpgradePolicy,
+    OutputContinuationPolicy,
     TransientModelRecoveryExecutor,
     TransientRecoveryState,
 )
@@ -64,7 +65,12 @@ from local_dev_agent.tools import (
 from local_dev_agent.tools.errors import ToolNotFoundError
 from local_dev_agent.tools.schema import ToolCallResult
 
-from .errors import AgentLoopExhaustedError, UnsupportedModelResponseError
+from .errors import (
+    AgentLoopExhaustedError,
+    OutputContinuationExhaustedError,
+    OutputContinuationToolUseError,
+    UnsupportedModelResponseError,
+)
 from .input_service import RuntimeStartResult
 
 logger = logging.getLogger(__name__)
@@ -102,6 +108,7 @@ class MinimalAgentLoop:
         memory_consolidation_service: MemoryConsolidationService | None = None,
         transient_recovery_executor: TransientModelRecoveryExecutor | None = None,
         output_budget_upgrade_policy: OutputBudgetUpgradePolicy | None = None,
+        output_continuation_policy: OutputContinuationPolicy | None = None,
     ) -> None:
         if max_turns < 1:
             raise ValueError("Agent Loop 的最大模型调用轮次必须大于或等于 1。")
@@ -135,6 +142,11 @@ class MinimalAgentLoop:
             OutputBudgetUpgradePolicy,
         ):
             raise ValueError("output_budget_upgrade_policy 必须是 OutputBudgetUpgradePolicy 对象。")
+        if output_continuation_policy is not None and not isinstance(
+            output_continuation_policy,
+            OutputContinuationPolicy,
+        ):
+            raise ValueError("output_continuation_policy 必须是 OutputContinuationPolicy 对象。")
         self._repository = repository
         self._model = model
         self._registry = registry or ToolRegistry()
@@ -151,6 +163,7 @@ class MinimalAgentLoop:
         self._memory_consolidation_service = memory_consolidation_service
         self._transient_recovery_executor = transient_recovery_executor
         self._output_budget_upgrade_policy = output_budget_upgrade_policy
+        self._output_continuation_policy = output_continuation_policy
 
     def execute(
         self,
@@ -438,15 +451,28 @@ class MinimalAgentLoop:
             system_prompt=system_prompt,
         )
         try:
+            active_max_output_tokens = (
+                self._output_budget_upgrade_policy.escalated_max_output_tokens
+                if output_budget_escalated
+                and self._output_budget_upgrade_policy is not None
+                and self._output_budget_upgrade_policy.can_upgrade
+                else None
+            )
             response, transient_recovery_state = self._generate_with_context_recovery(
                 snapshot,
                 force_history_compaction=force_history_compaction,
                 context_enricher=context_enricher,
                 transient_recovery_state=transient_recovery_state,
+                max_output_tokens=active_max_output_tokens,
             )
         except Exception:
             logger.error("模型调用失败。", exc_info=True, extra=log_context)
             raise
+        if (
+            response.stop_reason is StopReason.MAX_TOKENS
+            and self._output_continuation_policy is not None
+        ):
+            self._require_pure_text_response(response)
         if (
             response.stop_reason is StopReason.MAX_TOKENS
             and not output_budget_escalated
@@ -472,8 +498,94 @@ class MinimalAgentLoop:
                 logger.error("输出预算升级后的模型重试失败。", exc_info=True, extra=log_context)
                 raise
             output_budget_escalated = True
+        if (
+            response.stop_reason is StopReason.MAX_TOKENS
+            and output_budget_escalated
+            and self._output_continuation_policy is not None
+        ):
+            response, transient_recovery_state = self._continue_truncated_text_response(
+                snapshot,
+                first_fragment=response,
+                force_history_compaction=force_history_compaction,
+                context_enricher=context_enricher,
+                transient_recovery_state=transient_recovery_state,
+                max_output_tokens=(
+                    self._output_budget_upgrade_policy.escalated_max_output_tokens
+                    if self._output_budget_upgrade_policy is not None
+                    else None
+                ),
+            )
         logger.info("模型调用完成。", extra=log_context)
         return response, transient_recovery_state, output_budget_escalated
+
+    def _continue_truncated_text_response(
+        self,
+        snapshot: ContextInputSnapshot,
+        *,
+        first_fragment: ModelResponse,
+        force_history_compaction: bool,
+        context_enricher: ContextInputSnapshotEnricher | None,
+        transient_recovery_state: TransientRecoveryState | None,
+        max_output_tokens: int | None,
+    ) -> tuple[ModelResponse, TransientRecoveryState | None]:
+        """以临时纯文本片段续写，直到正常结束或耗尽明确上限。"""
+
+        policy = self._output_continuation_policy
+        if policy is None:
+            raise AssertionError("续写恢复必须配置输出续写策略。")
+        fragments = [self._require_pure_text_response(first_fragment).text]
+        temporary_messages: list[ModelMessage] = list(snapshot.messages)
+        response = first_fragment
+        for _ in range(policy.max_continuations):
+            temporary_messages.extend(
+                (
+                    ModelMessage(
+                        role=MessageRole.ASSISTANT,
+                        content=response.content,
+                    ),
+                    ModelMessage(
+                        role=MessageRole.USER,
+                        content=(TextBlock(policy.prompt),),
+                    ),
+                )
+            )
+            temporary_snapshot = ContextInputSnapshot(
+                session_id=snapshot.session_id,
+                run_id=snapshot.run_id,
+                messages=tuple(temporary_messages),
+                tools=snapshot.tools,
+                system_prompt=snapshot.system_prompt,
+            )
+            response, transient_recovery_state = self._generate_with_context_recovery(
+                temporary_snapshot,
+                force_history_compaction=force_history_compaction,
+                context_enricher=context_enricher,
+                transient_recovery_state=transient_recovery_state,
+                max_output_tokens=max_output_tokens,
+                allow_checkpoint_rebuild=False,
+            )
+            text_response = self._require_pure_text_response(response)
+            fragments.append(text_response.text)
+            if response.stop_reason is StopReason.END_TURN:
+                return (
+                    ModelResponse.text_completion("".join(fragments)),
+                    transient_recovery_state,
+                )
+            if response.stop_reason is not StopReason.MAX_TOKENS:
+                raise UnsupportedModelResponseError(stop_reason=response.stop_reason)
+        raise OutputContinuationExhaustedError(
+            max_continuations=policy.max_continuations,
+        )
+
+    @staticmethod
+    def _require_pure_text_response(response: ModelResponse) -> ModelResponse:
+        """拒绝续写流中的工具调用，避免未完成决策触发真实副作用。"""
+
+        if any(isinstance(block, ToolUseBlock) for block in response.content):
+            raise OutputContinuationToolUseError()
+        if not response.text_blocks:
+            raise UnsupportedModelResponseError(stop_reason=response.stop_reason)
+        return response
 
     def _generate_with_context_recovery(
         self,
@@ -483,6 +595,7 @@ class MinimalAgentLoop:
         context_enricher: ContextInputSnapshotEnricher | None,
         transient_recovery_state: TransientRecoveryState | None,
         max_output_tokens: int | None = None,
+        allow_checkpoint_rebuild: bool = True,
     ) -> tuple[ModelResponse, TransientRecoveryState | None]:
         """保留 S8 单次超限顺序，并为指定输出预算生成同一逻辑请求。"""
 
@@ -493,6 +606,7 @@ class MinimalAgentLoop:
                     force_history_compaction=force_history_compaction,
                     context_enricher=context_enricher,
                     max_output_tokens=max_output_tokens,
+                    allow_checkpoint_rebuild=allow_checkpoint_rebuild,
                 ),
                 transient_recovery_state=transient_recovery_state,
             )
@@ -505,6 +619,7 @@ class MinimalAgentLoop:
                     force_history_compaction=True,
                     context_enricher=context_enricher,
                     max_output_tokens=max_output_tokens,
+                    allow_checkpoint_rebuild=allow_checkpoint_rebuild,
                 ),
                 transient_recovery_state=transient_recovery_state,
             )
@@ -536,6 +651,7 @@ class MinimalAgentLoop:
         force_history_compaction: bool = False,
         context_enricher: ContextInputSnapshotEnricher | None = None,
         max_output_tokens: int | None = None,
+        allow_checkpoint_rebuild: bool = True,
     ) -> ModelRequest:
         """仅从完整内存历史派生 Provider 请求，避免重试污染 Conversation Transcript。"""
 
@@ -548,6 +664,7 @@ class MinimalAgentLoop:
                 force_history_compaction=force_history_compaction,
                 context_enricher=context_enricher,
                 max_output_tokens=max_output_tokens,
+                allow_checkpoint_rebuild=allow_checkpoint_rebuild,
             )
             messages = context_package.snapshot.messages
             tools = context_package.snapshot.tools

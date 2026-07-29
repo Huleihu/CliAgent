@@ -21,12 +21,16 @@ from .executor import (
 )
 from .output_budget import (
     DEFAULT_ESCALATED_MAX_OUTPUT_TOKENS,
+    DEFAULT_MAX_OUTPUT_CONTINUATIONS,
+    OUTPUT_CONTINUATION_PROMPT,
+    OutputContinuationPolicy,
     OutputBudgetUpgradePolicy,
 )
 
 __all__ = [
     "DEFAULT_BASE_DELAY_SECONDS",
     "DEFAULT_ESCALATED_MAX_OUTPUT_TOKENS",
+    "DEFAULT_MAX_OUTPUT_CONTINUATIONS",
     "DEFAULT_JITTER_RATIO",
     "DEFAULT_MAX_CONSECUTIVE_OVERLOADS",
     "DEFAULT_MAX_DELAY_SECONDS",
@@ -35,6 +39,8 @@ __all__ = [
     "RecoveryJitterSource",
     "RecoverySleeper",
     "OutputBudgetUpgradePolicy",
+    "OutputContinuationPolicy",
+    "OUTPUT_CONTINUATION_PROMPT",
     "SystemRecoverySleeper",
     "TransientModelRecoveryExecutor",
     "TransientModelRecoveryResult",
