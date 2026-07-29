@@ -10,14 +10,19 @@ from .errors import (
     TaskStateTransitionError,
 )
 from .json_repository import JsonFileTaskRepository
-from .ports import TaskRepository
+from .identifiers import UuidTaskIdGenerator
+from .ports import TaskIdGenerator, TaskRepository
 from .rules import can_claim_task, claim_task, complete_task, unresolved_dependency_ids
 from .schema import Task, TaskStatus
+from .service import TaskApplicationService, TaskCompletion, TaskService
 
 __all__ = [
     "Task",
     "TaskAlreadyExistsError",
+    "TaskApplicationService",
     "TaskBlockedError",
+    "TaskCompletion",
+    "TaskIdGenerator",
     "TaskNotFoundError",
     "TaskRepository",
     "TaskRepositoryError",
@@ -26,6 +31,8 @@ __all__ = [
     "TaskStatus",
     "CorruptedTaskFileError",
     "JsonFileTaskRepository",
+    "TaskService",
+    "UuidTaskIdGenerator",
     "can_claim_task",
     "claim_task",
     "complete_task",

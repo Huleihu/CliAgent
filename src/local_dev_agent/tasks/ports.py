@@ -20,3 +20,10 @@ class TaskRepository(Protocol):
 
     def replace(self, task: Task) -> Task:
         """以新的完整快照替换已有任务。"""
+
+
+class TaskIdGenerator(Protocol):
+    """为新建任务提供可替换且无需仓储参与的稳定标识。"""
+
+    def new_task_id(self) -> str:
+        """生成一个尚待仓储持久化的任务标识。"""
