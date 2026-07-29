@@ -51,6 +51,22 @@ def test_format_skill_catalog_rejects_invalid_budget(
         format_skill_catalog(_catalog(), max_characters=max_characters)
 
 
+@pytest.mark.parametrize("instruction", ["", "  ", None])
+def test_format_skill_catalog_rejects_invalid_instruction(instruction) -> None:
+    with pytest.raises(ValueError, match="字段“instruction”必须是非空字符串"):
+        format_skill_catalog(_catalog(), instruction=instruction)  # type: ignore[arg-type]
+
+
+def test_format_skill_catalog_allows_replacing_the_tool_instruction() -> None:
+    prompt = format_skill_catalog(
+        _catalog(),
+        instruction="需要完整说明时，使用已声明的技能加载工具。",
+    )
+
+    assert "load_skill" not in prompt
+    assert "使用已声明的技能加载工具" in prompt
+
+
 def test_format_skill_catalog_rejects_an_over_budget_catalog() -> None:
     with pytest.raises(ValueError, match="不能超过 10 个字符"):
         format_skill_catalog(_catalog(), max_characters=10)
