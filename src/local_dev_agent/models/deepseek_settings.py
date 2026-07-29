@@ -26,6 +26,7 @@ class DeepSeekSettings:
     base_url: str
     model: str
     max_tokens: int
+    fallback_model: str | None = None
 
     @classmethod
     def from_environment(
@@ -55,4 +56,6 @@ class DeepSeekSettings:
             ),
             model=_required_value(environment, "DEEPSEEK_MODEL"),
             max_tokens=max_tokens,
+            fallback_model=environment.get("DEEPSEEK_FALLBACK_MODEL", "").strip()
+            or None,
         )

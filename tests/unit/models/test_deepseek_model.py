@@ -133,6 +133,20 @@ def test_settings_reads_all_deepseek_values_from_environment() -> None:
     )
 
 
+def test_settings_reads_an_optional_fallback_model_from_environment() -> None:
+    settings = DeepSeekSettings.from_environment(
+        {
+            "DEEPSEEK_API_KEY": "测试密钥",
+            "DEEPSEEK_ANTHROPIC_BASE_URL": "https://example.test/anthropic",
+            "DEEPSEEK_MODEL": "primary-model",
+            "DEEPSEEK_FALLBACK_MODEL": "fallback-model",
+            "DEEPSEEK_MAX_TOKENS": "2048",
+        }
+    )
+
+    assert settings.fallback_model == "fallback-model"
+
+
 @pytest.mark.parametrize(
     ("values", "message"),
     [
@@ -172,6 +186,44 @@ def test_model_client_maps_a_text_response_and_sends_configured_request() -> Non
             "max_tokens": 1024,
             "messages": [{"role": "user", "content": "检查项目状态。"}],
             "thinking": {"type": "disabled"},
+        }
+    ]
+
+
+def test_model_client_uses_a_request_model_override_when_provided() -> None:
+    client = FakeAnthropicClient(
+        FakeMessage(stop_reason="end_turn", content=[FakeTextContent("状态正常。")])
+    )
+    model = DeepSeekAnthropicModelClient(_settings(), client=client)
+
+    model.generate(
+        ModelRequest(
+            session_id="session-1",
+            run_id="run-1",
+            user_input="检查项目状态。",
+            model_id="fallback-model",
+        )
+    )
+
+    assert client.messages.calls[0]["model"] == "fallback-model"
+
+
+def test_model_client_disables_sdk_implicit_retries(monkeypatch) -> None:
+    construction_arguments: list[dict[str, object]] = []
+
+    class ConstructedClient:
+        def __init__(self, **kwargs: object) -> None:
+            construction_arguments.append(kwargs)
+
+    monkeypatch.setattr(anthropic, "Anthropic", ConstructedClient)
+
+    DeepSeekAnthropicModelClient(_settings())
+
+    assert construction_arguments == [
+        {
+            "api_key": "测试密钥",
+            "base_url": "https://api.deepseek.com/anthropic",
+            "max_retries": 0,
         }
     ]
 

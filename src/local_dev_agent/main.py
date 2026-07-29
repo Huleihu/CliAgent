@@ -31,6 +31,10 @@ from local_dev_agent.memory import (
 )
 from local_dev_agent.observability import configure_logging
 from local_dev_agent.permissions import PermissionHook, SimplePermissionPolicy
+from local_dev_agent.recovery import (
+    TransientModelRecoveryExecutor,
+    TransientRecoveryPolicy,
+)
 from local_dev_agent.runtime import MinimalAgentLoop, UserInputRuntimeService
 from local_dev_agent.runtime.loop import AgentLoopResult
 from local_dev_agent.skills import (
@@ -151,6 +155,17 @@ def create_context_manager(
     )
 
 
+def create_transient_recovery_executor(
+    settings: DeepSeekSettings,
+) -> TransientModelRecoveryExecutor:
+    """组装父 Agent 的 S11 瞬态故障恢复，不影响受限子 Agent。"""
+
+    return TransientModelRecoveryExecutor(
+        TransientRecoveryPolicy(fallback_model_id=settings.fallback_model),
+        primary_model_id=settings.model,
+    )
+
+
 def create_memory_loader(*, workspace: Path, model: ModelClient) -> MemoryLoader:
     """组装工作区级长期记忆加载器；目录为空时不会发起选择模型调用。"""
 
@@ -263,6 +278,7 @@ def main() -> None:
             workspace=workspace,
             model=model,
         ),
+        transient_recovery_executor=create_transient_recovery_executor(settings),
     )
 
     print("Local Dev Agent")

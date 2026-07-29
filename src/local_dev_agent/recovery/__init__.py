@@ -10,6 +10,15 @@ from .transient import (
     TransientRecoveryState,
     TransientRetryDecision,
 )
+from .executor import (
+    RandomRecoveryJitterSource,
+    RecoveryJitterSource,
+    RecoverySleeper,
+    SystemRecoverySleeper,
+    TransientModelRecoveryExecutor,
+    TransientModelRecoveryResult,
+    TransientRecoveryExhaustedError,
+)
 
 __all__ = [
     "DEFAULT_BASE_DELAY_SECONDS",
@@ -17,6 +26,13 @@ __all__ = [
     "DEFAULT_MAX_CONSECUTIVE_OVERLOADS",
     "DEFAULT_MAX_DELAY_SECONDS",
     "DEFAULT_MAX_RETRIES",
+    "RandomRecoveryJitterSource",
+    "RecoveryJitterSource",
+    "RecoverySleeper",
+    "SystemRecoverySleeper",
+    "TransientModelRecoveryExecutor",
+    "TransientModelRecoveryResult",
+    "TransientRecoveryExhaustedError",
     "TransientRecoveryPolicy",
     "TransientRecoveryState",
     "TransientRetryDecision",

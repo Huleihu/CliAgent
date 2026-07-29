@@ -36,6 +36,9 @@ Copy-Item .env.example .env
 `DEEPSEEK_API_KEY`；模型名、接口地址和最大输出 Token 可按需要调整。当前
 Runtime 为了安全地完成工具结果回填，显式关闭 DeepSeek thinking 模式；推理内容
 不会进入本地状态、日志或后续模型请求。
+
+可选设置 `DEEPSEEK_FALLBACK_MODEL`。当同一父 Agent Run 连续遭遇 3 次 HTTP 529
+服务过载时，Runtime 会在有界退避后改用该备用模型继续重试；未设置时仍使用主模型。
 运行入口创建模型客户端时，先加载 `.env`，再读取配置：
 
 ```python

@@ -7,10 +7,12 @@ from local_dev_agent.main import create_permission_hook_runner
 from local_dev_agent.main import create_context_manager
 from local_dev_agent.main import create_memory_loader
 from local_dev_agent.main import create_subagent_runner
+from local_dev_agent.main import create_transient_recovery_executor
 from local_dev_agent.main import create_tool_registry
 from local_dev_agent.main import default_workspace
 from local_dev_agent.main import execute_prompt
 from local_dev_agent.models.fake import FakeModel
+from local_dev_agent.models import DeepSeekSettings
 from local_dev_agent.context import ContextInputSnapshot, ContextManager
 from local_dev_agent.models.ports import (
     MessageRole,
@@ -83,6 +85,20 @@ def test_create_context_manager_assembles_the_s8_pipeline(tmp_path) -> None:
     )
 
     assert isinstance(manager, ContextManager)
+
+
+def test_create_transient_recovery_executor_uses_deepseek_model_configuration() -> None:
+    executor = create_transient_recovery_executor(
+        DeepSeekSettings(
+            api_key="测试密钥",
+            base_url="https://example.test/anthropic",
+            model="primary-model",
+            fallback_model="fallback-model",
+            max_tokens=8_000,
+        )
+    )
+
+    assert executor.initial_state().current_model_id == "primary-model"
 
 
 def test_create_memory_loader_uses_the_workspace_memory_root(tmp_path) -> None:

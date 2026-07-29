@@ -46,6 +46,8 @@ class DeepSeekAnthropicModelClient:
         self._client = client or anthropic.Anthropic(
             api_key=settings.api_key,
             base_url=settings.base_url,
+            # S11 的 Harness 统一掌控退避次数，避免 SDK 与 Runtime 叠加重试。
+            max_retries=0,
         )
 
     def generate(self, request: ModelRequest) -> ModelResponse:
@@ -53,7 +55,7 @@ class DeepSeekAnthropicModelClient:
 
         messages = self._map_request_messages(request)
         request_parameters: dict[str, object] = {
-            "model": self._settings.model,
+            "model": request.model_id or self._settings.model,
             "max_tokens": self._settings.max_tokens,
             "messages": messages,
             # 当前内部协议不保存推理内容。显式关闭 thinking，避免工具回填时

@@ -28,7 +28,15 @@ from local_dev_agent.hooks import (
     StopContext,
     UserPromptSubmitContext,
 )
-from local_dev_agent.models import ModelContextWindowExceededError
+from local_dev_agent.models import (
+    ModelConnectionError,
+    ModelContextWindowExceededError,
+    ModelOverloadedError,
+)
+from local_dev_agent.recovery import (
+    TransientModelRecoveryExecutor,
+    TransientRecoveryPolicy,
+)
 from local_dev_agent.memory import (
     KeywordMemorySelector,
     MemoryCatalog,
@@ -90,6 +98,23 @@ class ScriptedModel:
         if isinstance(response, Exception):
             raise response
         return response
+
+
+class RecordingRecoverySleeper:
+    """记录 Runtime 重试等待，避免测试发生真实延迟。"""
+
+    def __init__(self) -> None:
+        self.delays: list[float] = []
+
+    def sleep(self, delay_seconds: float) -> None:
+        self.delays.append(delay_seconds)
+
+
+class FixedRecoveryJitterSource:
+    """让 Runtime 恢复路径使用确定性抖动。"""
+
+    def next_fraction(self) -> float:
+        return 0
 
 
 class RecordingSystemPromptProvider:
@@ -269,6 +294,118 @@ def test_minimal_agent_loop_completes_a_text_response_and_persists_states(
         RunStatus.RUNNING,
         RunStatus.COMPLETED,
     ]
+
+
+def test_minimal_agent_loop_retries_transient_errors_without_persisting_failed_requests(
+    tmp_path,
+) -> None:
+    timestamp = datetime(2026, 7, 29, 9, 0, tzinfo=timezone.utc)
+    repository = JsonFileStateRepository(tmp_path / "state")
+    conversation_repository = JsonFileConversationRepository(tmp_path / "state")
+    session = SessionState.create(
+        session_id="session-1",
+        tenant_id="tenant-1",
+        user_id="user-1",
+        project_id="project-1",
+        created_at=timestamp,
+    )
+    repository.save_session(session)
+    start = UserInputRuntimeService(repository).handle(
+        UserInputEvent.create(
+            session_id=session.session_id,
+            content="检查项目状态。",
+            occurred_at=timestamp,
+        )
+    )
+    model = ScriptedModel(
+        (
+            ModelConnectionError("网络暂时不可用。"),
+            ModelResponse.text_completion("恢复后完成。"),
+        )
+    )
+    sleeper = RecordingRecoverySleeper()
+    recovery_executor = TransientModelRecoveryExecutor(
+        TransientRecoveryPolicy(),
+        primary_model_id="primary-model",
+        sleeper=sleeper,
+        jitter_source=FixedRecoveryJitterSource(),
+    )
+
+    result = MinimalAgentLoop(
+        repository,
+        model,
+        conversation_repository=conversation_repository,
+        transient_recovery_executor=recovery_executor,
+    ).execute(start, occurred_at=timestamp)
+
+    assert result.response.text == "恢复后完成。"
+    assert [request.model_id for request in model.requests] == [
+        "primary-model",
+        "primary-model",
+    ]
+    assert sleeper.delays == [0.5]
+    assert conversation_repository.get_messages(session.session_id) == (
+        ModelMessage(
+            role=MessageRole.USER,
+            content=(TextBlock("检查项目状态。"),),
+        ),
+        ModelMessage(
+            role=MessageRole.ASSISTANT,
+            content=(TextBlock("恢复后完成。"),),
+        ),
+    )
+
+
+def test_minimal_agent_loop_switches_to_fallback_after_consecutive_overloads(
+    tmp_path,
+) -> None:
+    timestamp = datetime(2026, 7, 29, 9, 15, tzinfo=timezone.utc)
+    repository = JsonFileStateRepository(tmp_path / "state")
+    session = SessionState.create(
+        session_id="session-1",
+        tenant_id="tenant-1",
+        user_id="user-1",
+        project_id="project-1",
+        created_at=timestamp,
+    )
+    repository.save_session(session)
+    start = UserInputRuntimeService(repository).handle(
+        UserInputEvent.create(
+            session_id=session.session_id,
+            content="检查项目状态。",
+            occurred_at=timestamp,
+        )
+    )
+    model = ScriptedModel(
+        (
+            ModelOverloadedError("服务过载。"),
+            ModelOverloadedError("服务过载。"),
+            ModelOverloadedError("服务过载。"),
+            ModelResponse.text_completion("备用模型已完成。"),
+        )
+    )
+    sleeper = RecordingRecoverySleeper()
+    recovery_executor = TransientModelRecoveryExecutor(
+        TransientRecoveryPolicy(fallback_model_id="fallback-model"),
+        primary_model_id="primary-model",
+        sleeper=sleeper,
+        jitter_source=FixedRecoveryJitterSource(),
+    )
+
+    result = MinimalAgentLoop(
+        repository,
+        model,
+        transient_recovery_executor=recovery_executor,
+    ).execute(start, occurred_at=timestamp)
+
+    assert result.response.text == "备用模型已完成。"
+    assert [request.model_id for request in model.requests] == [
+        "primary-model",
+        "primary-model",
+        "primary-model",
+        "fallback-model",
+    ]
+    assert sleeper.delays == [0.5, 1.0, 2.0]
 
 
 def test_minimal_agent_loop_injects_memory_without_persisting_derived_content(tmp_path) -> None:
@@ -1521,15 +1658,28 @@ def test_minimal_agent_loop_retries_once_with_an_emergency_summary_view(
         ),
         HistorySummaryCompactor(summarizer),
     )
+    sleeper = RecordingRecoverySleeper()
+    recovery_executor = TransientModelRecoveryExecutor(
+        TransientRecoveryPolicy(),
+        primary_model_id="primary-model",
+        sleeper=sleeper,
+        jitter_source=FixedRecoveryJitterSource(),
+    )
 
     result = MinimalAgentLoop(
         repository,
         model,
         conversation_repository=conversation_repository,
         context_manager=context_manager,
+        transient_recovery_executor=recovery_executor,
     ).execute(start, occurred_at=timestamp)
 
     assert len(model.requests) == 2
+    assert [request.model_id for request in model.requests] == [
+        "primary-model",
+        "primary-model",
+    ]
+    assert sleeper.delays == []
     assert model.requests[0].conversation[0].content == (TextBlock("甲" * 500),)
     assert model.requests[1].conversation[0].content == (
         TextBlock("[已压缩的历史摘要]\n\n当前目标：继续处理用户请求。"),

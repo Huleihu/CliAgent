@@ -57,6 +57,7 @@
 - 已完成当前范围的 `learnClaude/s10_system_prompt` 闭环：系统提示以稳定 section 顺序按真实运行时状态组装，并对最近等价上下文缓存；CLI 父 Agent 通过动态提供器在每轮请求前取得提示，工具 schema 与工具名不重复写入提示，S7 技能目录、S8 检查点、S9 记忆注入、Todo reminder 和子 Agent 隔离均保持既有边界。当前不包含 API 级 prompt cache、跨进程缓存、动态技能重载或子 Agent 提示组装。
 - 已完成 `learnClaude/s11_error_recovery` 的第 1 个教学式小步：新增 Provider 无关的瞬态模型错误层次，明确区分连接失败、超时、HTTP 429 限流与 HTTP 529 过载，并以可选 `retry_after_seconds` 保存 Provider 建议等待时间。DeepSeek 适配器只依据 Anthropic SDK 异常类型、明确 HTTP 状态和数值型 `Retry-After` 响应头映射错误，不解释自然语言消息；S8 上下文超限优先级及其他 `DeepSeekModelError` 行为保持不变。本步尚未实现退避、重试、fallback 或输出截断恢复。
 - 已完成 `learnClaude/s11_error_recovery` 的第 2 个教学式小步：新增独立 `local_dev_agent.recovery` 纯恢复决策包，以不可变状态、策略和决策对象表示当前模型、连续 529 次数、是否重试、等待时间与 fallback 切换。策略优先使用 `Retry-After`，否则按 `min(0.5 × 2^retry_index, 32) + 0~25%` 计算延迟；最多允许 10 次重试，连续 3 次 529 时可选择备用模型。随机分数由调用方显式传入，策略不执行 `sleep`、模型调用或 Runtime 装配；当前尚未改变实际模型请求行为。
+- 已完成 `learnClaude/s11_error_recovery` 的第 3 个教学式小步：新增可注入等待器与随机源的 `TransientModelRecoveryExecutor`，仅由 CLI 父 Agent 装配并围绕同一份已派生 `ModelRequest` 执行有界瞬态恢复。运行时默认用标准库等待和随机源，测试不等待；SDK 客户端显式关闭自身隐式重试，防止与 Harness 退避叠加。`ModelRequest` 新增可选模型覆盖，连续 3 次 529 且配置 `DEEPSEEK_FALLBACK_MODEL` 后才切换备用模型。S8 超限错误继续绕过瞬态执行器并仅强制压缩、重试一次；派生提示、S9 记忆、Transcript、检查点与子 Agent 装配均保持既有边界。本步尚未处理 `max_tokens` 输出截断。
 - 使用 Conda 环境 `local-dev-agent`（Python 3.13）。
 
 ## 已完成
@@ -190,18 +191,22 @@
 - DeepSeek Anthropic 兼容适配器现将 SDK 连接/超时异常和明确 HTTP 429/529 状态映射为对应内部错误，保留原始 SDK 异常为原因，并从 `response.headers` 提取合法数值型 `Retry-After`。新增测试覆盖结构化映射、等待时间、非法响应头、自然语言关键词不得误判，以及现有上下文超限和不可恢复错误边界。
 - 新增 S11 独立 `recovery` 包：`TransientRecoveryPolicy` 只依据瞬态错误、当前恢复状态、重试序号和调用方提供的随机分数生成不可变 `TransientRetryDecision`；不进行真实等待，便于在下一步由 Runtime 注入时间与随机性。策略支持数值型 `Retry-After` 优先、0.5 秒起始且封顶 32 秒的指数退避、最多 10 次重试、连续 3 次 529 的可选 fallback，并在非 529 或成功后重置连续过载计数。
 - 新增 14 项恢复策略单元测试，覆盖退避与抖动、上限、`Retry-After`、最大重试、连续 529/fallback、状态重置和非法配置/输入；本步不修改 Provider、ContextManager、Conversation Transcript、检查点、记忆、子 Agent 或 CLI 装配。
+- 新增 S11 瞬态恢复执行器：它只捕获 `ModelTransientError`，通过策略决定后调用可替换等待器、复用同一操作和更新恢复状态；成功时重置连续过载计数，耗尽预算时保留最后一次 Provider 错误为原因。新增 `ModelRequest.model_id` 可选覆盖，DeepSeek 适配器优先使用该字段；CLI 从 `DEEPSEEK_MODEL` 创建父 Run 初始状态，并可通过可选 `DEEPSEEK_FALLBACK_MODEL` 在连续 529 后切换。创建 Anthropic SDK 客户端时显式传入 `max_retries=0`，将 429、529、连接和超时的退避权收敛到 Harness。
+- `MinimalAgentLoop` 仅在显式注入执行器时创建每个父 Run 独立的恢复状态；瞬态重试重用已完成 S8/S9 处理的同一请求，不追加失败响应或派生内容到 Transcript。S8 `ModelContextWindowExceededError` 未被执行器吞掉，仍由既有路径从完整原始快照强制压缩一次后重试。`SynchronousSubagentRunner` 未注入执行器，因此子 Agent 行为与隔离边界不变。
+- 新增 12 项模型请求、DeepSeek、恢复执行器、父 Runtime、S8 共存和 CLI 装配测试；`.env.example` 与 README 说明可选备用模型配置，真实 `.env` 未读取、修改或输出。
 
 ## 验证
 
 - `anthropic`、`python-dotenv`、`pytest` 可在 Conda 环境中导入。
 - `ruff` 可运行。
 - 已人工核对 `TDD.md` 与 `AGENT_REQUIREMENTS_CHECKLIST.txt` 的 S01–S30 覆盖关系；本次仅修改文档，未运行代码测试。
-- `python -m pytest`：507 passed（覆盖既有 S1-S10 闭环，以及 S11 瞬态错误契约、DeepSeek 连接/超时/429/529 映射、`Retry-After` 元数据、误判保护与纯恢复策略）。
+- `python -m pytest`：519 passed（覆盖既有 S1-S10 闭环，以及 S11 瞬态错误契约、纯恢复策略、可注入执行器、SDK 重试收敛、父 Runtime 重试/fallback、S8 共存和 CLI 装配）。
 - `python -m ruff check src tests`：发现 1 个既有错误：`tests/unit/memory/test_consolidation.py:9:59` 的单行分号触发 `E702`；已用 `git show HEAD:...` 确认该行在本步前已存在，新增 S10 文件的定向 Ruff 检查通过。
 - 本步定向 `python -m ruff check` 已覆盖 `src/local_dev_agent/models/errors.py`、`src/local_dev_agent/models/__init__.py`、`src/local_dev_agent/models/deepseek.py`、`tests/unit/models/test_model_errors.py` 与 `tests/unit/models/test_deepseek_model.py`，检查通过；完整 Ruff 仍仅报告上述 S9 既有 `E702`。
 - 本步定向 `python -m ruff check` 已覆盖 `src/local_dev_agent/recovery/` 与 `tests/unit/recovery/test_transient.py`，检查通过；完整 Ruff 仍仅报告上述 S9 既有 `E702`。首次在常规沙箱运行完整 pytest 时仅因 `.pytest-tmp` 清理权限失败；获得临时目录权限后，完整回归通过。
+- 本步定向 `python -m ruff check` 已覆盖 `src/local_dev_agent/models/`、`src/local_dev_agent/recovery/`、`src/local_dev_agent/runtime/loop.py`、`src/local_dev_agent/main.py` 以及对应模型、恢复、Runtime 和 CLI 测试，检查通过；完整 Ruff 仍仅报告上述 S9 既有 `E702`。Runtime/CLI 测试同样需要 `.pytest-tmp` 清理权限，授权后定向 104 项与完整回归均通过。
 
 ## 下一步
 
 - 已完成当前范围的 S8 Context Compact 版本化历史摘要检查点性能优化闭环：完整 Conversation Transcript 始终保持追加式原始历史；检查点独立、版本化、可验证且原子写入，后续模型请求优先使用“检查点摘要 + 原始尾部”，并能从完整历史重建以避免摘要漂移。后续若继续优化，可独立评估 Transcript 的增量存储、检查点校验缓存或更细粒度的重建策略。
-- S11 Error Recovery 第 2 步纯恢复策略已完成；下一步可将它接入父 Agent 的正式模型调用，注入实际等待与随机源、关闭 SDK 的隐式重试以避免双重退避，并在不改变 S8 单次上下文超限应急压缩、S9 记忆、动态系统提示和子 Agent 隔离的前提下，验证 429/529/连接错误的有界恢复。
+- S11 Error Recovery 第 3 步父 Agent 瞬态恢复已完成；下一步可单独实现 `max_tokens` 的首次输出预算升级：首次截断不写入 Transcript，按更高输出预算重发同一逻辑请求，并重新评估 S8 输入预算；本步不实现续写提示、连续截断合并或更改 S8 单次 Provider 超限语义。

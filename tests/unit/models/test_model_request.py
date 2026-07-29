@@ -147,6 +147,17 @@ def test_model_request_preserves_an_optional_system_prompt() -> None:
     assert request.system_prompt == "优先维护待办清单。"
 
 
+def test_model_request_preserves_an_optional_model_override() -> None:
+    request = ModelRequest(
+        session_id="session-1",
+        run_id="run-1",
+        user_input="检查项目状态。",
+        model_id="fallback-model",
+    )
+
+    assert request.model_id == "fallback-model"
+
+
 @pytest.mark.parametrize("system_prompt", ["", "   "])
 def test_model_request_rejects_blank_system_prompt(system_prompt: str) -> None:
     with pytest.raises(ValueError, match="字段“system_prompt”必须是非空字符串"):
@@ -155,4 +166,15 @@ def test_model_request_rejects_blank_system_prompt(system_prompt: str) -> None:
             run_id="run-1",
             user_input="检查项目状态。",
             system_prompt=system_prompt,
+        )
+
+
+@pytest.mark.parametrize("model_id", ["", "   "])
+def test_model_request_rejects_blank_model_override(model_id: str) -> None:
+    with pytest.raises(ValueError, match="字段“model_id”必须是非空字符串"):
+        ModelRequest(
+            session_id="session-1",
+            run_id="run-1",
+            user_input="检查项目状态。",
+            model_id=model_id,
         )

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 import logging
 
@@ -37,6 +37,10 @@ from local_dev_agent.models import (
     TextBlock,
     ToolResultBlock,
     ToolUseBlock,
+)
+from local_dev_agent.recovery import (
+    TransientModelRecoveryExecutor,
+    TransientRecoveryState,
 )
 from local_dev_agent.memory import (
     MemoryConsolidationService,
@@ -95,6 +99,7 @@ class MinimalAgentLoop:
         memory_loader: MemoryLoader | None = None,
         memory_extraction_service: MemoryExtractionService | None = None,
         memory_consolidation_service: MemoryConsolidationService | None = None,
+        transient_recovery_executor: TransientModelRecoveryExecutor | None = None,
     ) -> None:
         if max_turns < 1:
             raise ValueError("Agent Loop 的最大模型调用轮次必须大于或等于 1。")
@@ -116,6 +121,13 @@ class MinimalAgentLoop:
             "extract_and_save",
         ):
             raise ValueError("memory_extraction_service 必须提供 extract_and_save 方法。")
+        if transient_recovery_executor is not None and (
+            not hasattr(transient_recovery_executor, "initial_state")
+            or not hasattr(transient_recovery_executor, "execute")
+        ):
+            raise ValueError(
+                "transient_recovery_executor 必须提供 initial_state 和 execute 方法。"
+            )
         self._repository = repository
         self._model = model
         self._registry = registry or ToolRegistry()
@@ -130,6 +142,7 @@ class MinimalAgentLoop:
         self._memory_loader = memory_loader
         self._memory_extraction_service = memory_extraction_service
         self._memory_consolidation_service = memory_consolidation_service
+        self._transient_recovery_executor = transient_recovery_executor
 
     def execute(
         self,
@@ -172,15 +185,21 @@ class MinimalAgentLoop:
             log_context=log_context,
         )
         force_context_compaction_next = False
+        transient_recovery_state = (
+            self._transient_recovery_executor.initial_state()
+            if self._transient_recovery_executor is not None
+            else None
+        )
 
         for turn_number in range(1, self._max_turns + 1):
-            response = self._generate(
+            response, transient_recovery_state = self._generate(
                 session_id=start.session.session_id,
                 run_id=running_run.run_id,
                 conversation=tuple(conversation),
                 log_context=log_context,
                 force_history_compaction=force_context_compaction_next,
                 context_enricher=memory_context,
+                transient_recovery_state=transient_recovery_state,
             )
             force_context_compaction_next = False
             assistant_message = ModelMessage(
@@ -395,7 +414,8 @@ class MinimalAgentLoop:
         log_context: dict[str, str],
         force_history_compaction: bool = False,
         context_enricher: ContextInputSnapshotEnricher | None = None,
-    ) -> ModelResponse:
+        transient_recovery_state: TransientRecoveryState | None = None,
+    ) -> tuple[ModelResponse, TransientRecoveryState | None]:
         logger.info("开始模型调用。", extra=log_context)
         system_prompt = self._request_system_prompt()
         tools = self._registry.list_definitions()
@@ -407,12 +427,13 @@ class MinimalAgentLoop:
             system_prompt=system_prompt,
         )
         try:
-            response = self._model.generate(
+            response, transient_recovery_state = self._generate_model_request(
                 self._build_model_request(
                     snapshot,
                     force_history_compaction=force_history_compaction,
                     context_enricher=context_enricher,
-                )
+                ),
+                transient_recovery_state=transient_recovery_state,
             )
         except ModelContextWindowExceededError:
             if self._context_manager is None:
@@ -420,12 +441,13 @@ class MinimalAgentLoop:
                 raise
             logger.warning("模型上下文超限，开始一次应急压缩并重试。", extra=log_context)
             try:
-                response = self._model.generate(
+                response, transient_recovery_state = self._generate_model_request(
                     self._build_model_request(
                         snapshot,
                         force_history_compaction=True,
                         context_enricher=context_enricher,
-                    )
+                    ),
+                    transient_recovery_state=transient_recovery_state,
                 )
             except Exception:
                 logger.error("模型上下文超限后的应急重试失败。", exc_info=True, extra=log_context)
@@ -434,7 +456,27 @@ class MinimalAgentLoop:
             logger.error("模型调用失败。", exc_info=True, extra=log_context)
             raise
         logger.info("模型调用完成。", extra=log_context)
-        return response
+        return response, transient_recovery_state
+
+    def _generate_model_request(
+        self,
+        request: ModelRequest,
+        *,
+        transient_recovery_state: TransientRecoveryState | None,
+    ) -> tuple[ModelResponse, TransientRecoveryState | None]:
+        """对同一派生请求执行可选的瞬态恢复，不重新组装上下文。"""
+
+        if self._transient_recovery_executor is None:
+            return self._model.generate(request), transient_recovery_state
+        if transient_recovery_state is None:
+            raise AssertionError("已配置瞬态恢复执行器时必须提供恢复状态。")
+        result = self._transient_recovery_executor.execute(
+            lambda model_id: self._model.generate(
+                replace(request, model_id=model_id)
+            ),
+            transient_recovery_state,
+        )
+        return result.response, result.state
 
     def _build_model_request(
         self,
