@@ -50,6 +50,7 @@
 - 已完成 `learnClaude/s09_memory` 的第 3 个教学式小步：新增通用 `ContextInputSnapshotEnricher` 端口与 `MemoryRequestContext`，父 Agent 每个 Run 在用户消息持久化后只加载并选择一次工作区级记忆；ContextManager 先以完整原始历史恢复或重建 S8 检查点，再在派生视图中叠加长期记忆目录系统提示和相关正文，随后执行既有 Artifact、L1、L2 与预算。没有 ContextManager 时仍仅派生模型请求；原始 Conversation Transcript、检查点来源校验和子 Agent 均不接收或持久化记忆内容。CLI 现装配 `workspace/var/memory/` 文件仓储与模型选择器；空目录不会发起额外选择请求。当前尚未实现运行后提取或低频整理。
 - 已完成 `learnClaude/s09_memory` 的第 4 个教学式小步：新增 `MemoryExtractionRequest`、无工具 `ModelMemoryExtractor` 与 `MemoryExtractionService`；正常文本结束后，父 Agent 从当前 Run 的完整原始用户/助手消息提取候选长期记忆，与启动时目录去重后原子保存。提取模型只接受 JSON 数组，非法项目被忽略；重复标识不会覆盖既有记忆。提取服务在最终响应已追加 Transcript、Run 完成前触发，任何仓储或模型异常仅记录中文 WARNING，不影响既有完成结果；子 Agent 未装配该服务。CLI 现装配同一工作区记忆根目录的提取服务。当前尚未实现低频整理。
 - 已完成 `learnClaude/s09_memory` 的第 5 个教学式小步：新增按条目数量阈值触发的 `MemoryConsolidationPolicy`、无工具 `ModelMemoryConsolidator` 与整理服务；达到默认 10 条时，模型返回完整新目录，仓储先写入新条目、再删除淘汰文件并重建索引。整理在父 Agent 正常结束后、提取之后同步尝试，失败仅记录 WARNING；当前不含后台任务、时间门控或多进程锁。
+- 已完成 `learnClaude/s10_system_prompt` 的第 1 个教学式小步：新增独立 `local_dev_agent.system_prompt` 包，以不可变 `SystemPromptContext`、具名 `SystemPromptSection` 与 `CachedSystemPromptAssembler` 表示运行时 section 选择、稳定顺序组装和最近一次上下文缓存；缓存键使用规范化工具集合与工作区的确定性 JSON 序列化。工具名称仅保留为内部真实状态，供后续决定行为指导 section 是否加载，不会重复写入系统提示；当前尚未接入 CLI、Runtime、S8 或 S9。
 - 使用 Conda 环境 `local-dev-agent`（Python 3.13）。
 
 ## 已完成
@@ -185,9 +186,10 @@
 - `anthropic`、`python-dotenv`、`pytest` 可在 Conda 环境中导入。
 - `ruff` 可运行。
 - 已人工核对 `TDD.md` 与 `AGENT_REQUIREMENTS_CHECKLIST.txt` 的 S01–S30 覆盖关系；本次仅修改文档，未运行代码测试。
-- `python -m pytest`：449 passed（覆盖既有 S1-S8 闭环，以及 S9 长期记忆的文件仓储、选择、加载、派生注入、运行后提取与阈值整理）。
-- `python -m ruff check src tests`：通过。
+- `python -m pytest`：460 passed（覆盖既有 S1-S9 闭环，以及 S10 系统提示 section 组装与缓存）。
+- `python -m ruff check src tests`：发现 1 个既有错误：`tests/unit/memory/test_consolidation.py:9:59` 的单行分号触发 `E702`；已用 `git show HEAD:...` 确认该行在本步前已存在，新增 S10 文件的定向 Ruff 检查通过。
 
 ## 下一步
 
 - 已完成当前范围的 S8 Context Compact 版本化历史摘要检查点性能优化闭环：完整 Conversation Transcript 始终保持追加式原始历史；检查点独立、版本化、可验证且原子写入，后续模型请求优先使用“检查点摘要 + 原始尾部”，并能从完整历史重建以避免摘要漂移。后续若继续优化，可独立评估 Transcript 的增量存储、检查点校验缓存或更细粒度的重建策略。
+- 继续 S10 第 2 步：基于真实工具注册状态和 S7 启动时技能快照定义 CLI 行为指导 section；工具名称、描述和参数仍只由 Anthropic `tools` 参数声明，不重复写入系统提示。
