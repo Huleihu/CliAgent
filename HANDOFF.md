@@ -60,6 +60,7 @@
 - 已完成 `learnClaude/s11_error_recovery` 的第 3 个教学式小步：新增可注入等待器与随机源的 `TransientModelRecoveryExecutor`，仅由 CLI 父 Agent 装配并围绕同一份已派生 `ModelRequest` 执行有界瞬态恢复。运行时默认用标准库等待和随机源，测试不等待；SDK 客户端显式关闭自身隐式重试，防止与 Harness 退避叠加。`ModelRequest` 新增可选模型覆盖，连续 3 次 529 且配置 `DEEPSEEK_FALLBACK_MODEL` 后才切换备用模型。S8 超限错误继续绕过瞬态执行器并仅强制压缩、重试一次；派生提示、S9 记忆、Transcript、检查点与子 Agent 装配均保持既有边界。本步尚未处理 `max_tokens` 输出截断。
 - 已完成 `learnClaude/s11_error_recovery` 的第 4 个教学式小步：新增可注入的 `OutputBudgetUpgradePolicy`，CLI 父 Agent 在首次 `StopReason.MAX_TOKENS` 时按 S11 固定从当前配置升级至 64K；首次截断响应不会进入内存对话或 Conversation Transcript，而是从同一份完整原始快照重建请求。`ModelRequest` 与 DeepSeek Provider 支持可选输出预算覆盖，`ContextManager` 会以覆盖后的预算重新计算可用输入空间并按既有 S8 管线派生视图。瞬态恢复、S8 单次超限顺序、检查点、记忆和子 Agent 隔离均保持不变；本步刻意不实现第二次截断后的续写和合并。
 - 已完成 `learnClaude/s11_error_recovery` 的第 5 个教学式小步：CLI 父 Agent 对升级后仍为 `MAX_TOKENS` 的纯文本响应，最多以临时“片段 + 续写提示”派生请求续写 3 次；正常结束后仅合并并持久化一条规范助手响应。任何截断或续写响应出现 `tool_use` 都会在执行工具和写入 Transcript 前以中文错误拒绝；续写视图禁止重建持久化历史摘要检查点，记忆提取只接收最终合并响应。本步刻意采用保守工具边界，尚未实现企业级的已提交工具调用、幂等与恢复日志。
+- 已完成 `learnClaude/s12_task_system` 的第 1 个教学式小步：新增独立 `local_dev_agent.tasks` 纯领域包，以不可变 `TaskStatus`、`Task` 和 `TaskRepository` 表示跨会话任务图节点及其可替换持久化端口。依赖检查、认领和完成均为无副作用的公共规则：缺失或未完成依赖会阻塞认领，生命周期只允许 `pending → in_progress → completed`，认领和完成均返回新快照并保留 owner 以便追溯。本步刻意不实现 JSON 仓储、工具、CLI/系统提示注册、并发锁、环检测、release/unassign 或 Loop 改动。
 - 使用 Conda 环境 `local-dev-agent`（Python 3.13）。
 
 ## 已完成
@@ -198,6 +199,7 @@
 - 新增 12 项模型请求、DeepSeek、恢复执行器、父 Runtime、S8 共存和 CLI 装配测试；`.env.example` 与 README 说明可选备用模型配置，真实 `.env` 未读取、修改或输出。
 - 新增 S11 首次输出预算升级：`ModelRequest.max_output_tokens` 使 Provider 输出预算可被单次覆盖；父 Loop 首次收到 `MAX_TOKENS` 时不持久化该响应，以 64K 从完整原始快照重新装配请求。S8 `ContextManager` 的预算报告会使用新的输出预算，因而在输入空间收缩时仍按既有压缩顺序处理。新增 Provider、领域策略、ContextManager、父 Runtime 与 CLI 装配测试，覆盖 64K 参数、首次截断不写入 Transcript、原始逻辑请求保持不变，以及 S8 既有测试不变。
 - 新增 S11 有界临时续写：`OutputContinuationPolicy` 固定 3 次上限与临时续写提示；父 Loop 只在升级后的纯文本截断上构造不持久化的片段视图，正常结束后合并为单一 `END_TURN` 响应。截断或续写流中的工具调用会抛出 `OutputContinuationToolUseError`，不会执行工具、写入 Transcript 或触发记忆提取；耗尽上限抛出可诊断错误。`ContextManager` 的临时请求禁用检查点重建，确保恢复片段不进入持久化摘要。新增测试覆盖合并、3 次上限、工具拒绝、Transcript 与检查点隔离、CLI 装配及既有 S8 路径。
+- 新增 S12 任务图纯领域契约：`Task` 冻结任务标识、标题、描述、状态、owner 和 `blocked_by` 依赖快照，拒绝空白/重复依赖与 owner、状态不一致；`unresolved_dependency_ids()` 将缺失依赖与未完成依赖统一视为阻塞，`claim_task()` 与 `complete_task()` 只产生新的合法状态快照。新增 `TaskRepository` 结构化端口，暂不绑定 JSON 或其他基础设施。25 项单元测试覆盖契约校验、不可变性、依赖、状态转换、领域错误和端口可替换性。
 
 ## 验证
 
@@ -211,8 +213,11 @@
 - 本步定向 `python -m ruff check` 已覆盖 `src/local_dev_agent/models/`、`src/local_dev_agent/recovery/`、`src/local_dev_agent/runtime/loop.py`、`src/local_dev_agent/main.py` 以及对应模型、恢复、Runtime 和 CLI 测试，检查通过；完整 Ruff 仍仅报告上述 S9 既有 `E702`。Runtime/CLI 测试同样需要 `.pytest-tmp` 清理权限，授权后定向 104 项与完整回归均通过。
 - 本步定向 `python -m pytest`：104 passed；完整 `python -m pytest`：533 passed。首次常规沙箱测试仍仅因 `.pytest-tmp` 清理权限失败，使用已授权的测试命令后通过。`python -m ruff check src tests` 仍仅报告 `tests/unit/memory/test_consolidation.py:9:59` 的既有 `E702`；本步全部源码、策略和对应测试的定向 Ruff 检查通过。
 - 本步定向 `python -m pytest`：67 passed；完整 `python -m pytest`：542 passed。首次常规沙箱测试仍仅因 `.pytest-tmp` 清理权限失败，使用已授权的测试命令后通过。`python -m ruff check src tests` 仍仅报告 `tests/unit/memory/test_consolidation.py:9:59` 的既有 `E702`；本步全部源码、策略和对应测试的定向 Ruff 检查通过。
+- 本步定向 `python -m ruff check src/local_dev_agent/tasks tests/unit/tasks` 与 `python -m pytest tests/unit/tasks` 均通过，后者为 25 passed。
+- 常规沙箱的完整 pytest 仍因 `.pytest-tmp` 清理权限失败；使用已获授权的 `python -m pytest` 后，完整回归为 567 passed。`python -m ruff check src tests` 仍只报告 `tests/unit/memory/test_consolidation.py:9:59` 的既有 `E702`；新增 `tasks` 源码和测试的定向 Ruff 检查通过。
 
 ## 下一步
 
 - 已完成当前范围的 S8 Context Compact 版本化历史摘要检查点性能优化闭环：完整 Conversation Transcript 始终保持追加式原始历史；检查点独立、版本化、可验证且原子写入，后续模型请求优先使用“检查点摘要 + 原始尾部”，并能从完整历史重建以避免摘要漂移。后续若继续优化，可独立评估 Transcript 的增量存储、检查点校验缓存或更细粒度的重建策略。
 - S11 Error Recovery 第 5 步保守的有界纯文本续写已完成；后续若提升为企业级工具恢复，可独立设计“已提交工具调用”协议、`run_id + tool_use_id` 幂等记录、外部副作用权限与崩溃恢复日志，而不放宽当前截断工具调用的拒绝边界。
+- S12 下一步可独立实现任务 JSON 编解码和仓储适配器：每个任务独立持久化、稳定列表和原子替换；继续保持领域规则、Todo、S6 委派工具和 `MinimalAgentLoop` 的边界不变。
