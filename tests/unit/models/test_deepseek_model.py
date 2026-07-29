@@ -9,7 +9,11 @@ from local_dev_agent.models import (
     DeepSeekConfigurationError,
     DeepSeekModelError,
     DeepSeekSettings,
+    ModelConnectionError,
     ModelContextWindowExceededError,
+    ModelOverloadedError,
+    ModelRateLimitError,
+    ModelTimeoutError,
 )
 from local_dev_agent.models.ports import (
     MessageRole,
@@ -376,6 +380,111 @@ def test_model_client_maps_only_explicit_context_limit_signals(
 
 
 @pytest.mark.parametrize(
+    ("provider_error", "expected_error"),
+    [
+        (
+            anthropic.APIConnectionError(
+                message="网络不可用",
+                request=httpx.Request(
+                    "POST",
+                    "https://api.deepseek.com/anthropic/messages",
+                ),
+            ),
+            ModelConnectionError,
+        ),
+        (
+            anthropic.APITimeoutError(
+                request=httpx.Request(
+                    "POST",
+                    "https://api.deepseek.com/anthropic/messages",
+                ),
+            ),
+            ModelTimeoutError,
+        ),
+        (
+            FakeProviderError("速率限制", status_code=429),
+            ModelRateLimitError,
+        ),
+        (
+            FakeProviderError("服务过载", status_code=529),
+            ModelOverloadedError,
+        ),
+    ],
+)
+def test_model_client_maps_only_explicit_transient_signals(
+    provider_error: Exception,
+    expected_error: type[Exception],
+) -> None:
+    model = DeepSeekAnthropicModelClient(
+        _settings(),
+        client=FakeAnthropicClient(provider_error),
+    )
+
+    with pytest.raises(expected_error) as error_info:
+        model.generate(_request())
+
+    assert error_info.value.__cause__ is provider_error
+
+
+@pytest.mark.parametrize(
+    ("status_code", "expected_error"),
+    [
+        (429, ModelRateLimitError),
+        (529, ModelOverloadedError),
+    ],
+)
+def test_model_client_preserves_numeric_retry_after(
+    status_code: int,
+    expected_error: type[Exception],
+) -> None:
+    provider_error = anthropic.APIStatusError(
+        "测试瞬态错误",
+        response=httpx.Response(
+            status_code,
+            headers={"retry-after": "2.5"},
+            request=httpx.Request(
+                "POST",
+                "https://api.deepseek.com/anthropic/messages",
+            ),
+        ),
+        body={"error": {"type": "测试错误"}},
+    )
+    model = DeepSeekAnthropicModelClient(
+        _settings(),
+        client=FakeAnthropicClient(provider_error),
+    )
+
+    with pytest.raises(expected_error) as error_info:
+        model.generate(_request())
+
+    assert error_info.value.retry_after_seconds == 2.5
+
+
+def test_model_client_ignores_invalid_retry_after() -> None:
+    provider_error = anthropic.APIStatusError(
+        "测试速率限制",
+        response=httpx.Response(
+            429,
+            headers={"retry-after": "later"},
+            request=httpx.Request(
+                "POST",
+                "https://api.deepseek.com/anthropic/messages",
+            ),
+        ),
+        body={"error": {"type": "rate_limit_error"}},
+    )
+    model = DeepSeekAnthropicModelClient(
+        _settings(),
+        client=FakeAnthropicClient(provider_error),
+    )
+
+    with pytest.raises(ModelRateLimitError) as error_info:
+        model.generate(_request())
+
+    assert error_info.value.retry_after_seconds is None
+
+
+@pytest.mark.parametrize(
     "error",
     [
         FakeProviderError(
@@ -389,8 +498,8 @@ def test_model_client_maps_only_explicit_context_limit_signals(
             body={"error": {"type": "authentication_error"}},
         ),
         FakeProviderError(
-            "速率限制",
-            status_code=429,
+            "结构化正文不能替代明确的限流状态",
+            status_code=400,
             body={"error": {"type": "rate_limit_error"}},
         ),
         FakeProviderError(
@@ -399,6 +508,8 @@ def test_model_client_maps_only_explicit_context_limit_signals(
             body={"error": {"type": "api_error"}},
         ),
         FakeProviderError("文本中碰巧出现 prompt_too_long"),
+        RuntimeError("文本中碰巧出现 429"),
+        RuntimeError("文本中碰巧出现 overloaded"),
         anthropic.AuthenticationError(
             "认证失败",
             response=httpx.Response(
@@ -409,10 +520,6 @@ def test_model_client_maps_only_explicit_context_limit_signals(
                 ),
             ),
             body={"error": {"type": "authentication_error"}},
-        ),
-        anthropic.APIConnectionError(
-            message="网络不可用",
-            request=httpx.Request("POST", "https://api.deepseek.com/anthropic/messages"),
         ),
     ],
 )

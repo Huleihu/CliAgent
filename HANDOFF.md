@@ -55,6 +55,7 @@
 - 已完成 `learnClaude/s10_system_prompt` 的第 3 个教学式小步：新增 `SystemPromptProvider` 端口与基于上下文工厂的动态实现；`MinimalAgentLoop` 现可选注入提供器，并在每次模型调用前读取当前基础提示。静态 `system_prompt` 接口继续兼容，静态与动态来源同时配置会被拒绝以避免优先级歧义；一次性 Todo reminder 仍只追加到派生模型请求，动态提示也不写入 Transcript。当前 CLI 仍使用旧静态提示，S8 检查点、S9 记忆注入及子 Agent 隔离均未改变。
 - 已完成 `learnClaude/s10_system_prompt` 的第 4 个教学式小步：CLI 组合根现基于工作区、父 `ToolRegistry` 和启动时 `SkillCatalog` 创建动态系统提示提供器，替换旧的硬编码 `CLI_SYSTEM_PROMPT` / `build_cli_system_prompt()` 路径。父 Agent 每轮模型调用均按当前工具目录选择 section，工具名称仍只由 Anthropic `tools` 参数声明；子 Agent 继续使用独立静态提示。动态基础提示仍先进入 S8 原始快照，再由 S8 检查点恢复/重建和 S9 `MemoryRequestContext` 在派生视图中按既有顺序处理，均不写入 Transcript。
 - 已完成当前范围的 `learnClaude/s10_system_prompt` 闭环：系统提示以稳定 section 顺序按真实运行时状态组装，并对最近等价上下文缓存；CLI 父 Agent 通过动态提供器在每轮请求前取得提示，工具 schema 与工具名不重复写入提示，S7 技能目录、S8 检查点、S9 记忆注入、Todo reminder 和子 Agent 隔离均保持既有边界。当前不包含 API 级 prompt cache、跨进程缓存、动态技能重载或子 Agent 提示组装。
+- 已完成 `learnClaude/s11_error_recovery` 的第 1 个教学式小步：新增 Provider 无关的瞬态模型错误层次，明确区分连接失败、超时、HTTP 429 限流与 HTTP 529 过载，并以可选 `retry_after_seconds` 保存 Provider 建议等待时间。DeepSeek 适配器只依据 Anthropic SDK 异常类型、明确 HTTP 状态和数值型 `Retry-After` 响应头映射错误，不解释自然语言消息；S8 上下文超限优先级及其他 `DeepSeekModelError` 行为保持不变。本步尚未实现退避、重试、fallback 或输出截断恢复。
 - 使用 Conda 环境 `local-dev-agent`（Python 3.13）。
 
 ## 已完成
@@ -184,16 +185,19 @@
 - 新增只读 `LoadSkillTool`：工具仅接受精确技能名称，不解释任何文件路径，成功时返回名称、描述、受控相对目录和完整原始正文；未知或无效名称沿既有工具执行器收束为结构化失败。补充 11 项提示与工具测试，覆盖正文隔离、空目录、预算、快照返回、参数校验和结构化失败。
 - CLI 组合根现于启动时加载工作区技能快照，向父工具目录注册 `load_skill`，并通过 `build_cli_system_prompt()` 将仅含名称、描述的技能目录追加到既有 Todo 与受控委派指导；不加载正文到系统提示。
 - 新增 CLI 集成测试，覆盖父模型可见 `load_skill` 与目录元数据、首轮系统提示不含正文、完整正文经工具结果回填下一轮父模型，以及子 Agent 工具目录仍隔离 `task`、`todo_write` 与 `load_skill`。
+- 新增 S11 Provider 无关的 `ModelTransientError`、`ModelConnectionError`、`ModelTimeoutError`、`ModelRateLimitError` 与 `ModelOverloadedError`；公共错误契约验证等待时间必须是非负有限数值，并保持超时属于连接故障的可替换层次。
+- DeepSeek Anthropic 兼容适配器现将 SDK 连接/超时异常和明确 HTTP 429/529 状态映射为对应内部错误，保留原始 SDK 异常为原因，并从 `response.headers` 提取合法数值型 `Retry-After`。新增测试覆盖结构化映射、等待时间、非法响应头、自然语言关键词不得误判，以及现有上下文超限和不可恢复错误边界。
 
 ## 验证
 
 - `anthropic`、`python-dotenv`、`pytest` 可在 Conda 环境中导入。
 - `ruff` 可运行。
 - 已人工核对 `TDD.md` 与 `AGENT_REQUIREMENTS_CHECKLIST.txt` 的 S01–S30 覆盖关系；本次仅修改文档，未运行代码测试。
-- `python -m pytest`：475 passed（覆盖既有 S1-S9 闭环，以及 S10 系统提示 section 组装、缓存、CLI 条件加载、Runtime 动态读取和 CLI 组合根）。
+- `python -m pytest`：493 passed（覆盖既有 S1-S10 闭环，以及 S11 瞬态错误契约、DeepSeek 连接/超时/429/529 映射、`Retry-After` 元数据和误判保护）。
 - `python -m ruff check src tests`：发现 1 个既有错误：`tests/unit/memory/test_consolidation.py:9:59` 的单行分号触发 `E702`；已用 `git show HEAD:...` 确认该行在本步前已存在，新增 S10 文件的定向 Ruff 检查通过。
+- 本步定向 `python -m ruff check` 已覆盖 `src/local_dev_agent/models/errors.py`、`src/local_dev_agent/models/__init__.py`、`src/local_dev_agent/models/deepseek.py`、`tests/unit/models/test_model_errors.py` 与 `tests/unit/models/test_deepseek_model.py`，检查通过；完整 Ruff 仍仅报告上述 S9 既有 `E702`。
 
 ## 下一步
 
 - 已完成当前范围的 S8 Context Compact 版本化历史摘要检查点性能优化闭环：完整 Conversation Transcript 始终保持追加式原始历史；检查点独立、版本化、可验证且原子写入，后续模型请求优先使用“检查点摘要 + 原始尾部”，并能从完整历史重建以避免摘要漂移。后续若继续优化，可独立评估 Transcript 的增量存储、检查点校验缓存或更细粒度的重建策略。
-- S10 System Prompt 已完成当前教学范围；后续可进入 `learnClaude/s11_error_recovery`，在不破坏 S8 单次上下文超限应急压缩语义的前提下，为网络、限流、输出截断等故障建立可验证的恢复边界。
+- S11 Error Recovery 第 1 步错误分类契约已完成；下一步可实现纯恢复策略，加入可注入的指数退避、抖动、`Retry-After` 优先级、最大次数和连续 529/fallback 决策，但暂不接入 Runtime 或真实等待。

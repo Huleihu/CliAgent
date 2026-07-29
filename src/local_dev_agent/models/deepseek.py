@@ -4,12 +4,20 @@ from __future__ import annotations
 
 import json
 from collections.abc import Mapping
+from math import isfinite
 from typing import Any
 
 import anthropic
 
 from .deepseek_settings import DeepSeekSettings
-from .errors import ModelContextWindowExceededError
+from .errors import (
+    ModelConnectionError,
+    ModelContextWindowExceededError,
+    ModelOverloadedError,
+    ModelRateLimitError,
+    ModelTimeoutError,
+    ModelTransientError,
+)
 from .ports import (
     ModelContentBlock,
     ModelMessage,
@@ -65,9 +73,38 @@ class DeepSeekAnthropicModelClient:
                 raise ModelContextWindowExceededError(
                     "DeepSeek 明确拒绝了超过上下文或请求大小限制的输入。"
                 ) from error
+            transient_error = self._map_transient_error(error)
+            if transient_error is not None:
+                raise transient_error from error
             raise DeepSeekModelError("DeepSeek 模型调用失败。") from error
 
         return self._map_response(response)
+
+    @classmethod
+    def _map_transient_error(
+        cls,
+        error: Exception,
+    ) -> ModelTransientError | None:
+        """按 SDK 类型和 HTTP 状态映射瞬态错误，不解释异常消息文本。"""
+
+        if isinstance(error, anthropic.APITimeoutError):
+            return ModelTimeoutError("DeepSeek 模型调用超时。")
+        if isinstance(error, anthropic.APIConnectionError):
+            return ModelConnectionError("DeepSeek 模型连接失败。")
+
+        status_code = cls._status_code(error)
+        retry_after_seconds = cls._retry_after_seconds(error)
+        if isinstance(error, anthropic.RateLimitError) or status_code == 429:
+            return ModelRateLimitError(
+                "DeepSeek 明确拒绝了超过当前速率限制的请求。",
+                retry_after_seconds=retry_after_seconds,
+            )
+        if isinstance(error, anthropic.OverloadedError) or status_code == 529:
+            return ModelOverloadedError(
+                "DeepSeek 服务当前过载。",
+                retry_after_seconds=retry_after_seconds,
+            )
+        return None
 
     @classmethod
     def _is_context_window_exceeded(cls, error: Exception) -> bool:
@@ -107,6 +144,25 @@ class DeepSeekAnthropicModelClient:
                 if isinstance(value, str):
                     return value
         return None
+
+    @staticmethod
+    def _retry_after_seconds(error: Exception) -> float | None:
+        """读取数值型 Retry-After；非法响应头留给退避策略自行计算。"""
+
+        response = getattr(error, "response", None)
+        headers = getattr(response, "headers", None)
+        if headers is None or not hasattr(headers, "get"):
+            return None
+        value = headers.get("retry-after")
+        if not isinstance(value, str) or not value.strip():
+            return None
+        try:
+            seconds = float(value)
+        except ValueError:
+            return None
+        if not isfinite(seconds) or seconds < 0:
+            return None
+        return seconds
 
     @staticmethod
     def _map_tool_definition(tool: ToolDefinition) -> dict[str, object]:
