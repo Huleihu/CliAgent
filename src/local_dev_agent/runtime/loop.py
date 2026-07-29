@@ -39,6 +39,7 @@ from local_dev_agent.models import (
     ToolUseBlock,
 )
 from local_dev_agent.recovery import (
+    OutputBudgetUpgradePolicy,
     TransientModelRecoveryExecutor,
     TransientRecoveryState,
 )
@@ -100,6 +101,7 @@ class MinimalAgentLoop:
         memory_extraction_service: MemoryExtractionService | None = None,
         memory_consolidation_service: MemoryConsolidationService | None = None,
         transient_recovery_executor: TransientModelRecoveryExecutor | None = None,
+        output_budget_upgrade_policy: OutputBudgetUpgradePolicy | None = None,
     ) -> None:
         if max_turns < 1:
             raise ValueError("Agent Loop 的最大模型调用轮次必须大于或等于 1。")
@@ -128,6 +130,11 @@ class MinimalAgentLoop:
             raise ValueError(
                 "transient_recovery_executor 必须提供 initial_state 和 execute 方法。"
             )
+        if output_budget_upgrade_policy is not None and not isinstance(
+            output_budget_upgrade_policy,
+            OutputBudgetUpgradePolicy,
+        ):
+            raise ValueError("output_budget_upgrade_policy 必须是 OutputBudgetUpgradePolicy 对象。")
         self._repository = repository
         self._model = model
         self._registry = registry or ToolRegistry()
@@ -143,6 +150,7 @@ class MinimalAgentLoop:
         self._memory_extraction_service = memory_extraction_service
         self._memory_consolidation_service = memory_consolidation_service
         self._transient_recovery_executor = transient_recovery_executor
+        self._output_budget_upgrade_policy = output_budget_upgrade_policy
 
     def execute(
         self,
@@ -190,9 +198,10 @@ class MinimalAgentLoop:
             if self._transient_recovery_executor is not None
             else None
         )
+        output_budget_escalated = False
 
         for turn_number in range(1, self._max_turns + 1):
-            response, transient_recovery_state = self._generate(
+            response, transient_recovery_state, output_budget_escalated = self._generate(
                 session_id=start.session.session_id,
                 run_id=running_run.run_id,
                 conversation=tuple(conversation),
@@ -200,6 +209,7 @@ class MinimalAgentLoop:
                 force_history_compaction=force_context_compaction_next,
                 context_enricher=memory_context,
                 transient_recovery_state=transient_recovery_state,
+                output_budget_escalated=output_budget_escalated,
             )
             force_context_compaction_next = False
             assistant_message = ModelMessage(
@@ -415,7 +425,8 @@ class MinimalAgentLoop:
         force_history_compaction: bool = False,
         context_enricher: ContextInputSnapshotEnricher | None = None,
         transient_recovery_state: TransientRecoveryState | None = None,
-    ) -> tuple[ModelResponse, TransientRecoveryState | None]:
+        output_budget_escalated: bool = False,
+    ) -> tuple[ModelResponse, TransientRecoveryState | None, bool]:
         logger.info("开始模型调用。", extra=log_context)
         system_prompt = self._request_system_prompt()
         tools = self._registry.list_definitions()
@@ -427,36 +438,76 @@ class MinimalAgentLoop:
             system_prompt=system_prompt,
         )
         try:
-            response, transient_recovery_state = self._generate_model_request(
+            response, transient_recovery_state = self._generate_with_context_recovery(
+                snapshot,
+                force_history_compaction=force_history_compaction,
+                context_enricher=context_enricher,
+                transient_recovery_state=transient_recovery_state,
+            )
+        except Exception:
+            logger.error("模型调用失败。", exc_info=True, extra=log_context)
+            raise
+        if (
+            response.stop_reason is StopReason.MAX_TOKENS
+            and not output_budget_escalated
+            and self._output_budget_upgrade_policy is not None
+            and self._output_budget_upgrade_policy.can_upgrade
+        ):
+            escalated_max_output_tokens = (
+                self._output_budget_upgrade_policy.escalated_max_output_tokens
+            )
+            logger.warning(
+                "模型输出达到 token 上限，使用更高输出预算重试同一逻辑请求。",
+                extra=log_context,
+            )
+            try:
+                response, transient_recovery_state = self._generate_with_context_recovery(
+                    snapshot,
+                    force_history_compaction=force_history_compaction,
+                    context_enricher=context_enricher,
+                    transient_recovery_state=transient_recovery_state,
+                    max_output_tokens=escalated_max_output_tokens,
+                )
+            except Exception:
+                logger.error("输出预算升级后的模型重试失败。", exc_info=True, extra=log_context)
+                raise
+            output_budget_escalated = True
+        logger.info("模型调用完成。", extra=log_context)
+        return response, transient_recovery_state, output_budget_escalated
+
+    def _generate_with_context_recovery(
+        self,
+        snapshot: ContextInputSnapshot,
+        *,
+        force_history_compaction: bool,
+        context_enricher: ContextInputSnapshotEnricher | None,
+        transient_recovery_state: TransientRecoveryState | None,
+        max_output_tokens: int | None = None,
+    ) -> tuple[ModelResponse, TransientRecoveryState | None]:
+        """保留 S8 单次超限顺序，并为指定输出预算生成同一逻辑请求。"""
+
+        try:
+            return self._generate_model_request(
                 self._build_model_request(
                     snapshot,
                     force_history_compaction=force_history_compaction,
                     context_enricher=context_enricher,
+                    max_output_tokens=max_output_tokens,
                 ),
                 transient_recovery_state=transient_recovery_state,
             )
         except ModelContextWindowExceededError:
             if self._context_manager is None:
-                logger.error("模型上下文超限，且未配置应急压缩。", exc_info=True, extra=log_context)
                 raise
-            logger.warning("模型上下文超限，开始一次应急压缩并重试。", extra=log_context)
-            try:
-                response, transient_recovery_state = self._generate_model_request(
-                    self._build_model_request(
-                        snapshot,
-                        force_history_compaction=True,
-                        context_enricher=context_enricher,
-                    ),
-                    transient_recovery_state=transient_recovery_state,
-                )
-            except Exception:
-                logger.error("模型上下文超限后的应急重试失败。", exc_info=True, extra=log_context)
-                raise
-        except Exception:
-            logger.error("模型调用失败。", exc_info=True, extra=log_context)
-            raise
-        logger.info("模型调用完成。", extra=log_context)
-        return response, transient_recovery_state
+            return self._generate_model_request(
+                self._build_model_request(
+                    snapshot,
+                    force_history_compaction=True,
+                    context_enricher=context_enricher,
+                    max_output_tokens=max_output_tokens,
+                ),
+                transient_recovery_state=transient_recovery_state,
+            )
 
     def _generate_model_request(
         self,
@@ -484,6 +535,7 @@ class MinimalAgentLoop:
         *,
         force_history_compaction: bool = False,
         context_enricher: ContextInputSnapshotEnricher | None = None,
+        max_output_tokens: int | None = None,
     ) -> ModelRequest:
         """仅从完整内存历史派生 Provider 请求，避免重试污染 Conversation Transcript。"""
 
@@ -495,6 +547,7 @@ class MinimalAgentLoop:
                 snapshot,
                 force_history_compaction=force_history_compaction,
                 context_enricher=context_enricher,
+                max_output_tokens=max_output_tokens,
             )
             messages = context_package.snapshot.messages
             tools = context_package.snapshot.tools
@@ -510,6 +563,7 @@ class MinimalAgentLoop:
             messages=messages,
             tools=tools,
             system_prompt=system_prompt,
+            max_output_tokens=max_output_tokens,
         )
 
     def _load_memory_context(

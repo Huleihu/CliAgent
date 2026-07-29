@@ -158,6 +158,17 @@ def test_model_request_preserves_an_optional_model_override() -> None:
     assert request.model_id == "fallback-model"
 
 
+def test_model_request_preserves_an_optional_output_budget_override() -> None:
+    request = ModelRequest(
+        session_id="session-1",
+        run_id="run-1",
+        user_input="检查项目状态。",
+        max_output_tokens=64_000,
+    )
+
+    assert request.max_output_tokens == 64_000
+
+
 @pytest.mark.parametrize("system_prompt", ["", "   "])
 def test_model_request_rejects_blank_system_prompt(system_prompt: str) -> None:
     with pytest.raises(ValueError, match="字段“system_prompt”必须是非空字符串"):
@@ -177,4 +188,17 @@ def test_model_request_rejects_blank_model_override(model_id: str) -> None:
             run_id="run-1",
             user_input="检查项目状态。",
             model_id=model_id,
+        )
+
+
+@pytest.mark.parametrize("max_output_tokens", [0, -1, True, "64000"])
+def test_model_request_rejects_an_invalid_output_budget_override(
+    max_output_tokens: object,
+) -> None:
+    with pytest.raises(ValueError, match="max_output_tokens"):
+        ModelRequest(
+            session_id="session-1",
+            run_id="run-1",
+            user_input="检查项目状态。",
+            max_output_tokens=max_output_tokens,  # type: ignore[arg-type]
         )

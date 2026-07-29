@@ -19,9 +19,14 @@ from .executor import (
     TransientModelRecoveryResult,
     TransientRecoveryExhaustedError,
 )
+from .output_budget import (
+    DEFAULT_ESCALATED_MAX_OUTPUT_TOKENS,
+    OutputBudgetUpgradePolicy,
+)
 
 __all__ = [
     "DEFAULT_BASE_DELAY_SECONDS",
+    "DEFAULT_ESCALATED_MAX_OUTPUT_TOKENS",
     "DEFAULT_JITTER_RATIO",
     "DEFAULT_MAX_CONSECUTIVE_OVERLOADS",
     "DEFAULT_MAX_DELAY_SECONDS",
@@ -29,6 +34,7 @@ __all__ = [
     "RandomRecoveryJitterSource",
     "RecoveryJitterSource",
     "RecoverySleeper",
+    "OutputBudgetUpgradePolicy",
     "SystemRecoverySleeper",
     "TransientModelRecoveryExecutor",
     "TransientModelRecoveryResult",

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from .artifacts import ToolResultArtifact
 from .budget import (
@@ -105,6 +105,7 @@ class ContextManager:
         *,
         force_history_compaction: bool = False,
         context_enricher: ContextInputSnapshotEnricher | None = None,
+        max_output_tokens: int | None = None,
     ) -> ContextPackage:
         """按 Artifact 化、L1、L2、预算复算、L4 的顺序装配请求视图。"""
 
@@ -112,11 +113,23 @@ class ContextManager:
             raise ValueError("字段“snapshot”必须是 ContextInputSnapshot 对象。")
         if not isinstance(force_history_compaction, bool):
             raise ValueError("字段“force_history_compaction”必须是布尔值。")
+        if max_output_tokens is not None and (
+            isinstance(max_output_tokens, bool)
+            or not isinstance(max_output_tokens, int)
+            or max_output_tokens < 1
+        ):
+            raise ValueError("字段“max_output_tokens”必须是正整数。")
         if context_enricher is not None and not hasattr(context_enricher, "enrich"):
             raise ValueError("context_enricher 必须提供 enrich 方法。")
+        budget = (
+            replace(self._budget, max_output_tokens=max_output_tokens)
+            if max_output_tokens is not None
+            else self._budget
+        )
         checkpoint_view = self._restore_checkpoint_view(snapshot)
         prepared_snapshot, budget_report, artifacts = self._prepare_pre_summary(
             checkpoint_view,
+            budget=budget,
             context_enricher=context_enricher,
         )
         history_compacted = checkpoint_view is not snapshot
@@ -131,6 +144,7 @@ class ContextManager:
                 )
                 prepared_snapshot, budget_report, artifacts = self._prepare_pre_summary(
                     rebuilt_view,
+                    budget=budget,
                     context_enricher=context_enricher,
                 )
             else:
@@ -144,6 +158,7 @@ class ContextManager:
                 )
                 prepared_snapshot, budget_report, artifacts = self._prepare_pre_summary(
                     summarized_snapshot,
+                    budget=budget,
                     context_enricher=context_enricher,
                 )
         if budget_report.exceeds_budget:
@@ -169,6 +184,7 @@ class ContextManager:
         self,
         snapshot: ContextInputSnapshot,
         *,
+        budget: ContextBudget,
         context_enricher: ContextInputSnapshotEnricher | None,
     ) -> tuple[
         ContextInputSnapshot,
@@ -187,7 +203,7 @@ class ContextManager:
         prepared_snapshot = self._micro_compactor.compact(prepared_snapshot)
         return (
             prepared_snapshot,
-            self._estimator.estimate(prepared_snapshot, self._budget),
+            self._estimator.estimate(prepared_snapshot, budget),
             budget_result.artifacts,
         )
 

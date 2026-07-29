@@ -56,7 +56,7 @@ class DeepSeekAnthropicModelClient:
         messages = self._map_request_messages(request)
         request_parameters: dict[str, object] = {
             "model": request.model_id or self._settings.model,
-            "max_tokens": self._settings.max_tokens,
+            "max_tokens": request.max_output_tokens or self._settings.max_tokens,
             "messages": messages,
             # 当前内部协议不保存推理内容。显式关闭 thinking，避免工具回填时
             # 丢失 DeepSeek 要求继续传递的思考块，导致后续响应失去可见内容。

@@ -208,6 +208,24 @@ def test_model_client_uses_a_request_model_override_when_provided() -> None:
     assert client.messages.calls[0]["model"] == "fallback-model"
 
 
+def test_model_client_uses_a_request_output_budget_override_when_provided() -> None:
+    client = FakeAnthropicClient(
+        FakeMessage(stop_reason="end_turn", content=[FakeTextContent("状态正常。")])
+    )
+    model = DeepSeekAnthropicModelClient(_settings(), client=client)
+
+    model.generate(
+        ModelRequest(
+            session_id="session-1",
+            run_id="run-1",
+            user_input="检查项目状态。",
+            max_output_tokens=64_000,
+        )
+    )
+
+    assert client.messages.calls[0]["max_tokens"] == 64_000
+
+
 def test_model_client_disables_sdk_implicit_retries(monkeypatch) -> None:
     construction_arguments: list[dict[str, object]] = []
 

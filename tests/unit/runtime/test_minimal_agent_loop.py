@@ -34,6 +34,7 @@ from local_dev_agent.models import (
     ModelOverloadedError,
 )
 from local_dev_agent.recovery import (
+    OutputBudgetUpgradePolicy,
     TransientModelRecoveryExecutor,
     TransientRecoveryPolicy,
 )
@@ -352,6 +353,64 @@ def test_minimal_agent_loop_retries_transient_errors_without_persisting_failed_r
         ModelMessage(
             role=MessageRole.ASSISTANT,
             content=(TextBlock("恢复后完成。"),),
+        ),
+    )
+
+
+def test_minimal_agent_loop_escalates_the_first_truncated_output_without_persisting_it(
+    tmp_path,
+) -> None:
+    timestamp = datetime(2026, 7, 29, 9, 10, tzinfo=timezone.utc)
+    repository = JsonFileStateRepository(tmp_path / "state")
+    conversation_repository = JsonFileConversationRepository(tmp_path / "state")
+    session = SessionState.create(
+        session_id="session-1",
+        tenant_id="tenant-1",
+        user_id="user-1",
+        project_id="project-1",
+        created_at=timestamp,
+    )
+    repository.save_session(session)
+    start = UserInputRuntimeService(repository).handle(
+        UserInputEvent.create(
+            session_id=session.session_id,
+            content="生成完整的迁移方案。",
+            occurred_at=timestamp,
+        )
+    )
+    model = ScriptedModel(
+        (
+            ModelResponse(
+                stop_reason=StopReason.MAX_TOKENS,
+                content=(TextBlock("这是未完成的回答。"),),
+            ),
+            ModelResponse.text_completion("这是使用更高预算得到的完整回答。"),
+        )
+    )
+
+    result = MinimalAgentLoop(
+        repository,
+        model,
+        conversation_repository=conversation_repository,
+        output_budget_upgrade_policy=OutputBudgetUpgradePolicy(
+            initial_max_output_tokens=8_000,
+        ),
+    ).execute(start, occurred_at=timestamp)
+
+    assert result.response.text == "这是使用更高预算得到的完整回答。"
+    assert [request.max_output_tokens for request in model.requests] == [None, 64_000]
+    assert [request.conversation for request in model.requests] == [
+        model.requests[0].conversation,
+        model.requests[0].conversation,
+    ]
+    assert conversation_repository.get_messages(session.session_id) == (
+        ModelMessage(
+            role=MessageRole.USER,
+            content=(TextBlock("生成完整的迁移方案。"),),
+        ),
+        ModelMessage(
+            role=MessageRole.ASSISTANT,
+            content=(TextBlock("这是使用更高预算得到的完整回答。"),),
         ),
     )
 
