@@ -1,7 +1,8 @@
 """Cron 调度领域与后续基础设施适配器之间的稳定端口。"""
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from datetime import datetime
+from threading import Event, Thread
 from typing import Protocol
 
 from .schema import CronTask, CronTrigger
@@ -51,3 +52,17 @@ class CronTriggerQueue(Protocol):
 
     def acknowledge(self, trigger: CronTrigger) -> None:
         """确认并移除已经尝试交付的队首触发。"""
+
+
+class CronWaiter(Protocol):
+    """隔离调度循环等待，避免单元测试依赖真实 sleep。"""
+
+    def wait(self, stop_event: Event, timeout_seconds: float) -> bool:
+        """等待超时或停止事件；返回 True 表示应停止循环。"""
+
+
+class CronThreadFactory(Protocol):
+    """隔离 daemon 线程创建，允许测试同步接管线程目标。"""
+
+    def start(self, *, target: Callable[[], None], name: str) -> Thread:
+        """启动线程并返回其句柄。"""
