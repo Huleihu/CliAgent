@@ -211,6 +211,7 @@
 - 已完成 `learnClaude/s13_background_tasks` 的第 3 个教学式小步：新增 `SubprocessCommandRunner`、显式优先的后台执行策略和父侧 `BashTool`。工具前台路径返回退出码与有界合并输出，后台路径要求完整 `ToolExecutionContext` 并只返回 `bg_id` 关联信息；`run_in_background=false` 可覆盖慢命令启发式。工具完全复用既有参数校验、Pre/Post Hook 和权限链，权限阻止时不会启动后台任务；当前尚未把工具注册到 CLI、S6 子 Agent 或 Runtime，也未接入通知收集。
 - 已完成 `learnClaude/s13_background_tasks` 的第 4 个教学式小步：新增通用 `PendingUserMessageSource` 端口；`MinimalAgentLoop` 仅在 Run 开始和工具结果回填时按 Session 排出文本，并与原有 user 消息顺序持久化，来源失败只记录 warning 而不阻断任务。新增 `BackgroundTaskNotificationSource`，它从后台任务仓储一次性读取终态快照并格式化、转义为独立 `<task_notification>` 文本；原始工具调用仍只保留一个配对 `ToolResultBlock`。Loop 不识别后台命令、线程、`bg_id`、状态或慢命令策略；当前仍未在 CLI 注册工具或通知源。
 - 已完成 `learnClaude/s13_background_tasks` 的第 5 个教学式小步和当前章节闭环：CLI 组合根创建共享的内存仓储、递增标识生成器、`SubprocessCommandRunner`、线程服务与通知源，父工具目录注册 `BashTool`，并把同一仓储上的通知源注入父 Loop；S6 子 Agent 四项文件工具白名单保持不变。后台执行指导仅在父目录真实注册命令工具时加入系统提示。CLI 闭环测试使用 `Event` 与 Fake Runner 精确协调，确认父 Agent 收到 `bg_id` 后继续文件工具调用，并在终态写回后收到一次性独立通知；同时对齐了第 3 步文档与工具结果的 `bg_id` 字段。README 已说明父子能力边界、权限链、通知语义和进程内 daemon 生命周期。
+- 已完成 `learnClaude/s14_cron_scheduler` 的第 1 个教学式小步：新增独立 `local_dev_agent.cron` 领域包，以不可变 `CronTask`、`CronTrigger` 和 `CronTaskScope` 区分工作区 durable 定义、Session-only 定义及每次交付 Session；新增五段式 cron 最小安全子集解析与匹配，支持 `*`、`*/N`、`N`、`N-M`、`N,M,...`，并在 DOM/DOW 同时受限时使用 OR 语义。表达式拒绝范围外、别名、混合复合、范围步长等写法；分钟标记统一为精确 UTC 分钟，为后续同一分钟防重提供不可变快照基础。新增仓储、时钟和触发队列端口，当前尚未实现持久化、线程、工具、Scheduler、Queue Processor 或 Runtime 接入。
 
 ## 验证
 
@@ -239,9 +240,11 @@
 - 本步定向 `python -m pytest tests/unit/background_tasks tests/unit/tools/test_bash_tool.py tests/unit/system_prompt/test_cli.py tests/unit/test_main.py` 通过（82 passed）；覆盖工具结果字段、父组合根、条件提示、父侧 CLI 闭环和子 Agent 隔离。
 - 本步扩大定向回归覆盖 S13、Runtime、Storage、S11、S12、Todo、S6 子 Agent、CLI 与系统提示，共 295 passed；对应定向 `python -m ruff check` 通过。
 - 本章结束完整 `python -m pytest` 通过（672 passed）。完整 `python -m ruff check src tests` 已运行，仍只报告本章开始前已有的 `tests/unit/memory/test_consolidation.py:9:59` 单行分号 `E702`；本章全部新增和修改文件的定向 Ruff 检查通过。
+- 本步定向 `python -m pytest tests/unit/cron/test_schema.py tests/unit/cron/test_expression.py tests/unit/cron/test_ports.py` 通过（32 passed）；`python -m ruff check src/local_dev_agent/cron tests/unit/cron` 通过。
 
 ## 下一步
 
+- S14 Cron Scheduler 下一步是实现注册服务与 durable/session-only 仓储：注册前必须解析表达式，durable 仅持久化工作区定义，恢复时逐条重新校验并安全跳过非法表达式；仍不接入 Scheduler、线程、工具、Runtime 或子 Agent。
 - S13 后台任务当前章节闭环已完成。后续若扩展，可独立设计跨进程持久化、取消/查询工具、并发数量限制、输出 Artifact 或 CLI 退出时的任务收敛；这些能力不应放宽 Session 隔离、权限/Hook 链、S6 子 Agent 白名单或 Runtime 通用通知端口边界。
 - 已完成当前范围的 S8 Context Compact 版本化历史摘要检查点性能优化闭环：完整 Conversation Transcript 始终保持追加式原始历史；检查点独立、版本化、可验证且原子写入，后续模型请求优先使用“检查点摘要 + 原始尾部”，并能从完整历史重建以避免摘要漂移。后续若继续优化，可独立评估 Transcript 的增量存储、检查点校验缓存或更细粒度的重建策略。
 - S11 Error Recovery 第 5 步保守的有界纯文本续写已完成；后续若提升为企业级工具恢复，可独立设计“已提交工具调用”协议、`run_id + tool_use_id` 幂等记录、外部副作用权限与崩溃恢复日志，而不放宽当前截断工具调用的拒绝边界。
