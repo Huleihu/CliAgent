@@ -2,6 +2,7 @@
 
 from .bash import BashTool
 from .compact import CompactContextTool
+from .cron_tools import CancelCronTool, ListCronsTool, ScheduleCronTool
 from .edit_file import EditFileTool
 from .list_files import ListFilesTool
 from .load_skill import LoadSkillTool
@@ -18,11 +19,14 @@ from .write_file import WriteFileTool
 
 __all__ = [
     "CompactContextTool",
+    "CancelCronTool",
     "BashTool",
     "EditFileTool",
     "ListFilesTool",
+    "ListCronsTool",
     "LoadSkillTool",
     "ReadFileTool",
+    "ScheduleCronTool",
     "ReadArtifactTool",
     "TaskTool",
     "TaskClaimTool",

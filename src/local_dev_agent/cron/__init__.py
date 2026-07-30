@@ -9,6 +9,7 @@ from .errors import (
 )
 from .catalog import CronTaskCatalog
 from .clock import SystemCronClock
+from .execution_gate import LockCronExecutionGate
 from .expression import CronExpression, CronField, cron_matches, parse_cron_expression
 from .identifiers import UuidCronTaskIdGenerator
 from .in_memory import InMemoryCronTaskRepository
@@ -17,11 +18,15 @@ from .ports import (
     CronClock,
     CronTaskIdGenerator,
     CronTaskRepository,
+    CronTaskApplicationService,
+    CronExecutionGate,
     CronThreadFactory,
+    CronTriggerConsumer,
     CronTriggerQueue,
     CronWaiter,
 )
 from .queue import InMemoryCronTriggerQueue
+from .processor import CronQueueProcessor
 from .scheduler import CronScheduler
 from .schema import CronTask, CronTaskScope, CronTrigger
 from .service import CronTaskService
@@ -30,10 +35,12 @@ from .threading import CronSchedulerRunner, DaemonCronThreadFactory, EventCronWa
 __all__ = [
     "CorruptedCronTaskFileError",
     "CronClock",
+    "CronExecutionGate",
     "CronExpression",
     "CronExpressionValidationError",
     "CronField",
     "CronTask",
+    "CronTaskApplicationService",
     "CronTaskAlreadyExistsError",
     "CronTaskCatalog",
     "CronTaskIdGenerator",
@@ -45,14 +52,17 @@ __all__ = [
     "CronTaskService",
     "CronTaskScope",
     "CronThreadFactory",
+    "CronTriggerConsumer",
     "CronTrigger",
     "CronTriggerQueue",
+    "CronQueueProcessor",
     "CronWaiter",
     "DaemonCronThreadFactory",
     "EventCronWaiter",
     "InMemoryCronTaskRepository",
     "InMemoryCronTriggerQueue",
     "JsonFileCronTaskRepository",
+    "LockCronExecutionGate",
     "SystemCronClock",
     "UuidCronTaskIdGenerator",
     "cron_matches",

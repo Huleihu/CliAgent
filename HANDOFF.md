@@ -214,6 +214,7 @@
 - 已完成 `learnClaude/s14_cron_scheduler` 的第 1 个教学式小步：新增独立 `local_dev_agent.cron` 领域包，以不可变 `CronTask`、`CronTrigger` 和 `CronTaskScope` 区分工作区 durable 定义、Session-only 定义及每次交付 Session；新增五段式 cron 最小安全子集解析与匹配，支持 `*`、`*/N`、`N`、`N-M`、`N,M,...`，并在 DOM/DOW 同时受限时使用 OR 语义。表达式拒绝范围外、别名、混合复合、范围步长等写法；分钟标记统一为精确 UTC 分钟，为后续同一分钟防重提供不可变快照基础。新增仓储、时钟和触发队列端口，当前尚未实现持久化、线程、工具、Scheduler、Queue Processor 或 Runtime 接入。
 - 已完成 `learnClaude/s14_cron_scheduler` 的第 2 个教学式小步：新增 `CronTaskService`、UUID 标识生成器、带锁的 `InMemoryCronTaskRepository` 与工作区级 `JsonFileCronTaskRepository`。服务会在生成标识和写仓储前完成 cron 解析，并按作用域路由：session-only 定义仅保存于当前进程内的 Session 仓储，durable 定义仅保存于 `var/state/cron/scheduled_tasks.json`。durable JSON 使用版本化集合、同目录临时文件、`fsync` 与原子替换；恢复时会逐条重新解析并安全跳过非法、重复或 scope 不合法的条目，损坏的整体文件仍以中文错误明确拒绝。当前尚未实现 Scheduler、触发队列适配器、线程、工具或 Runtime 接入。
 - 已完成 `learnClaude/s14_cron_scheduler` 的第 3 个教学式小步：新增 scope 路由的 `CronTaskCatalog`、本地时区系统时钟、带锁 FIFO `InMemoryCronTriggerQueue`、`CronScheduler` 和可替换 Event 等待器/daemon 线程运行器。Scheduler 只读取当前 Session 可见定义、按带时区时钟匹配并写入 `CronTrigger`，绝不调用 Agent 或工具；同一任务同一 UTC 分钟由持久化标记和进程内标记双重防重，即使入队后的仓储更新失败也不会在同一分钟重复入队。一次性任务成功入队后立即在进程内退休并从定义仓储删除。测试使用 Fake Clock、Event 与同步线程工厂，不依赖真实 sleep。当前尚未实现 Queue Processor、工具或 Runtime 接入。
+- 已完成 `learnClaude/s14_cron_scheduler` 的第 4 个教学式小步：新增 `CronQueueProcessor`、锁式执行租约和抽象 `CronTriggerConsumer`。处理器仅在租约可用时读取队首、尝试一次交付并确认出队；消费者失败会记录日志并确认该触发，避免坏消息永久阻塞 FIFO，绝不自行判断 cron 或直接启动 Agent。新增仅供父 Agent 组合根注册的 `schedule_cron`、`list_crons`、`cancel_cron` 工具：它们从既有 `ToolExecutionContext` 取得 Session 并委托 `CronTaskService`，复用标准参数校验、Hook、权限和结构化结果链路。尚未注册到 CLI 或 Runtime，S6 子 Agent 白名单未修改。
 
 ## 验证
 
@@ -245,10 +246,11 @@
 - 本步定向 `python -m pytest tests/unit/cron/test_schema.py tests/unit/cron/test_expression.py tests/unit/cron/test_ports.py` 通过（32 passed）；`python -m ruff check src/local_dev_agent/cron tests/unit/cron` 通过。
 - 本步定向 `python -m pytest tests/unit/cron/test_in_memory.py tests/unit/cron/test_json_repository.py tests/unit/cron/test_service.py` 通过（12 passed）；完整 `python -m pytest tests/unit/cron` 通过（44 passed）；`python -m ruff check src/local_dev_agent/cron tests/unit/cron` 通过。
 - 本步定向 `python -m pytest tests/unit/cron/test_queue.py tests/unit/cron/test_scheduler.py tests/unit/cron/test_scheduler_runner.py` 通过（6 passed）；完整 `python -m pytest tests/unit/cron` 通过（50 passed）；`python -m ruff check src/local_dev_agent/cron tests/unit/cron` 通过。
+- 本步定向 `python -m pytest tests/unit/cron tests/unit/tools/test_cron_tools.py tests/unit/permissions/test_simple_permission.py` 通过（67 passed）；覆盖队首租约、消费者失败确认、工具 Session 归属、参数拒绝与 PreToolUse 阻止。`python -m ruff check src/local_dev_agent/cron src/local_dev_agent/tools/builtin tests/unit/cron tests/unit/tools/test_cron_tools.py` 通过。
 
 ## 下一步
 
-- S14 Cron Scheduler 下一步是实现 Queue Processor 与三个父侧 cron 工具：处理器只在 Agent 执行租约可用时消费队首 Trigger，并经抽象消费者尝试交付；`schedule_cron`、`list_crons`、`cancel_cron` 通过既有工具校验、Hook 和权限链操作服务。仍不接入 CLI、Runtime 或子 Agent 白名单。
+- S14 Cron Scheduler 下一步是在 CLI 组合根装配任务仓储、Scheduler Runner、触发队列、执行租约、Queue Processor 与 Runtime 通知消费者；仅在父工具目录注册 cron 工具并追加条件系统提示。必须先证明既有通用 `PendingUserMessageSource` 可完成交付，避免改动 `runtime/loop.py`；S6 子 Agent 白名单保持不变。
 - S13 后台任务当前章节闭环已完成。后续若扩展，可独立设计跨进程持久化、取消/查询工具、并发数量限制、输出 Artifact 或 CLI 退出时的任务收敛；这些能力不应放宽 Session 隔离、权限/Hook 链、S6 子 Agent 白名单或 Runtime 通用通知端口边界。
 - 已完成当前范围的 S8 Context Compact 版本化历史摘要检查点性能优化闭环：完整 Conversation Transcript 始终保持追加式原始历史；检查点独立、版本化、可验证且原子写入，后续模型请求优先使用“检查点摘要 + 原始尾部”，并能从完整历史重建以避免摘要漂移。后续若继续优化，可独立评估 Transcript 的增量存储、检查点校验缓存或更细粒度的重建策略。
 - S11 Error Recovery 第 5 步保守的有界纯文本续写已完成；后续若提升为企业级工具恢复，可独立设计“已提交工具调用”协议、`run_id + tool_use_id` 幂等记录、外部副作用权限与崩溃恢复日志，而不放宽当前截断工具调用的拒绝边界。

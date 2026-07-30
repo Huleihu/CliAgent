@@ -66,3 +66,33 @@ class CronThreadFactory(Protocol):
 
     def start(self, *, target: Callable[[], None], name: str) -> Thread:
         """启动线程并返回其句柄。"""
+
+
+class CronTriggerConsumer(Protocol):
+    """接收已到期 Trigger 的交付端口，不绑定 Agent 或 Runtime。"""
+
+    def consume(self, trigger: CronTrigger) -> None:
+        """尝试交付一项已经由 Scheduler 产生的触发。"""
+
+
+class CronExecutionGate(Protocol):
+    """串行化定时 Agent 交付的非阻塞执行租约。"""
+
+    def try_acquire(self) -> bool:
+        """成功获得租约时返回 True；忙碌时不阻塞。"""
+
+    def release(self) -> None:
+        """释放此前成功获得的执行租约。"""
+
+
+class CronTaskApplicationService(Protocol):
+    """供工具层调用的 cron 注册、查询与取消用例。"""
+
+    def schedule(self, *, session_id: str, cron: str, prompt: str, recurring: bool = True, durable: bool = False) -> CronTask:
+        """注册新定义。"""
+
+    def list_for_session(self, *, session_id: str) -> tuple[CronTask, ...]:
+        """读取当前 Session 可见定义。"""
+
+    def cancel(self, *, session_id: str, task_id: str) -> CronTask:
+        """取消当前 Session 可访问的定义。"""
