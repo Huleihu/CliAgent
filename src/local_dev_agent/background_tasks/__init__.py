@@ -8,6 +8,7 @@ from .errors import (
 )
 from .identifiers import SequentialBackgroundTaskIdGenerator
 from .in_memory import InMemoryBackgroundTaskRepository
+from .notifications import BackgroundTaskNotificationSource
 from .policy import BackgroundExecutionPolicy
 from .ports import (
     BackgroundTaskExecutionService,
@@ -25,6 +26,7 @@ __all__ = [
     "BackgroundTaskExecutionService",
     "BackgroundTaskIdGenerator",
     "BackgroundTaskNotFoundError",
+    "BackgroundTaskNotificationSource",
     "BackgroundTaskRepository",
     "BackgroundTaskStatus",
     "BackgroundExecutionPolicy",

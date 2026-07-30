@@ -209,6 +209,7 @@
 - 已完成 `learnClaude/s13_background_tasks` 的第 1 个教学式小步：新增独立 `local_dev_agent.background_tasks` 领域包，以不可变 `BackgroundTask` 表示归属 Session、Run 和原始工具调用的后台命令快照；任务只支持运行中、完成和失败三种首版状态，并冻结 UTC 时间、退出信息、输出摘要与失败原因。新增可替换的任务仓储、标识生成和命令执行端口；当前未实现线程、进程、内存或持久化适配器，未注册 `bash` 工具，也未修改 Runtime、任务图、Todo、S6 子 Agent 或 S11 恢复边界。
 - 已完成 `learnClaude/s13_background_tasks` 的第 2 个教学式小步：新增带互斥锁的 `InMemoryBackgroundTaskRepository`、递增标识生成器与 `ThreadedBackgroundTaskService`。服务先保存运行中快照，再以 daemon 线程调用可替换 `CommandRunner`，按退出码或异常写回完成/失败的新快照，并将输出摘要限制为可配置上界；后台线程只访问后台任务仓储，不写 JSON、Conversation、Run/Step、任务图或 Todo。当前仍未实现真实 shell 适配器、`bash` 工具、通知收集或 Runtime 接入。
 - 已完成 `learnClaude/s13_background_tasks` 的第 3 个教学式小步：新增 `SubprocessCommandRunner`、显式优先的后台执行策略和父侧 `BashTool`。工具前台路径返回退出码与有界合并输出，后台路径要求完整 `ToolExecutionContext` 并只返回 `bg_id` 关联信息；`run_in_background=false` 可覆盖慢命令启发式。工具完全复用既有参数校验、Pre/Post Hook 和权限链，权限阻止时不会启动后台任务；当前尚未把工具注册到 CLI、S6 子 Agent 或 Runtime，也未接入通知收集。
+- 已完成 `learnClaude/s13_background_tasks` 的第 4 个教学式小步：新增通用 `PendingUserMessageSource` 端口；`MinimalAgentLoop` 仅在 Run 开始和工具结果回填时按 Session 排出文本，并与原有 user 消息顺序持久化，来源失败只记录 warning 而不阻断任务。新增 `BackgroundTaskNotificationSource`，它从后台任务仓储一次性读取终态快照并格式化、转义为独立 `<task_notification>` 文本；原始工具调用仍只保留一个配对 `ToolResultBlock`。Loop 不识别后台命令、线程、`bg_id`、状态或慢命令策略；当前仍未在 CLI 注册工具或通知源。
 
 ## 验证
 
@@ -233,10 +234,11 @@
 - 本步定向 `python -m pytest tests/unit/background_tasks` 通过（15 passed）；`python -m ruff check src/local_dev_agent/background_tasks tests/unit/background_tasks` 通过。
 - 本步定向 `python -m pytest tests/unit/background_tasks` 通过（32 passed）；`python -m ruff check src/local_dev_agent/background_tasks tests/unit/background_tasks` 通过。
 - 本步定向 `python -m pytest tests/unit/background_tasks tests/unit/tools/test_bash_tool.py tests/unit/permissions/test_simple_permission.py` 通过（64 passed）；`python -m ruff check src/local_dev_agent/background_tasks src/local_dev_agent/tools/builtin tests/unit/background_tasks tests/unit/tools/test_bash_tool.py` 通过。
+- 本步定向 `python -m pytest tests/unit/background_tasks tests/unit/runtime/test_pending_messages.py tests/unit/runtime/test_minimal_agent_loop.py tests/unit/storage/test_json_conversation_repository.py` 通过（83 passed）；`python -m ruff check src/local_dev_agent/background_tasks src/local_dev_agent/runtime tests/unit/background_tasks tests/unit/runtime/test_pending_messages.py` 通过。
 
 ## 下一步
 
-- S13 下一步需在获得确认后，新增领域无关的 Runtime 待处理通知端口，并仅让 `MinimalAgentLoop` 将其排出的文本合并到后续 user 消息；Loop 不识别后台命令、线程、`bg_id` 或慢命令策略。随后才在 CLI 组合根注册父侧工具和通知适配器，S6 子 Agent 白名单保持不变。
+- S13 下一步在 CLI 组合根创建共享的后台任务仓储、标识生成器、命令执行器、线程服务和通知源，注册父侧 `BashTool` 并增加条件式后台执行提示；S6 子 Agent 白名单不继承该工具。完成后运行完整 pytest 与 `python -m ruff check src tests`，并更新 README 的 CLI 能力说明。
 - 已完成当前范围的 S8 Context Compact 版本化历史摘要检查点性能优化闭环：完整 Conversation Transcript 始终保持追加式原始历史；检查点独立、版本化、可验证且原子写入，后续模型请求优先使用“检查点摘要 + 原始尾部”，并能从完整历史重建以避免摘要漂移。后续若继续优化，可独立评估 Transcript 的增量存储、检查点校验缓存或更细粒度的重建策略。
 - S11 Error Recovery 第 5 步保守的有界纯文本续写已完成；后续若提升为企业级工具恢复，可独立设计“已提交工具调用”协议、`run_id + tool_use_id` 幂等记录、外部副作用权限与崩溃恢复日志，而不放宽当前截断工具调用的拒绝边界。
 - S12 任务图基础闭环已完成：后续若扩展，可独立设计并发文件锁、一般环检测、release/unassign、任务更新、批量操作或与 S13 后台任务的关联；这些能力不应放宽当前 Todo、S6 委派工具和 `MinimalAgentLoop` 的边界。

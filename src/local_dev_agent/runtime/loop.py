@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 import logging
+from collections.abc import Sequence
 
 from local_dev_agent.context import (
     ContextInputSnapshot,
@@ -72,6 +73,7 @@ from .errors import (
     UnsupportedModelResponseError,
 )
 from .input_service import RuntimeStartResult
+from .notifications import PendingUserMessageSource
 
 logger = logging.getLogger(__name__)
 
@@ -109,6 +111,7 @@ class MinimalAgentLoop:
         transient_recovery_executor: TransientModelRecoveryExecutor | None = None,
         output_budget_upgrade_policy: OutputBudgetUpgradePolicy | None = None,
         output_continuation_policy: OutputContinuationPolicy | None = None,
+        pending_user_message_source: PendingUserMessageSource | None = None,
     ) -> None:
         if max_turns < 1:
             raise ValueError("Agent Loop 的最大模型调用轮次必须大于或等于 1。")
@@ -147,6 +150,10 @@ class MinimalAgentLoop:
             OutputContinuationPolicy,
         ):
             raise ValueError("output_continuation_policy 必须是 OutputContinuationPolicy 对象。")
+        if pending_user_message_source is not None and not callable(
+            getattr(pending_user_message_source, "drain", None)
+        ):
+            raise ValueError("pending_user_message_source 必须提供 drain 方法。")
         self._repository = repository
         self._model = model
         self._registry = registry or ToolRegistry()
@@ -164,6 +171,7 @@ class MinimalAgentLoop:
         self._transient_recovery_executor = transient_recovery_executor
         self._output_budget_upgrade_policy = output_budget_upgrade_policy
         self._output_continuation_policy = output_continuation_policy
+        self._pending_user_message_source = pending_user_message_source
 
     def execute(
         self,
@@ -184,9 +192,13 @@ class MinimalAgentLoop:
         running_run = self._start_run(start.run, timestamp)
         current_step = self._start_step(start.first_step, timestamp)
         completed_steps: list[StepState] = []
+        initial_notifications = self._drain_pending_user_messages(
+            session_id=start.session.session_id,
+            log_context=log_context,
+        )
         user_message = ModelMessage(
             role=MessageRole.USER,
-            content=(TextBlock(text=start.event.content),),
+            content=(TextBlock(text=start.event.content), *initial_notifications),
         )
         conversation = self._load_conversation(start.session.session_id)
         run_message_start = len(conversation)
@@ -253,7 +265,13 @@ class MinimalAgentLoop:
                 )
                 tool_result_message = ModelMessage(
                     role=MessageRole.USER,
-                    content=tool_results,
+                    content=(
+                        *tool_results,
+                        *self._drain_pending_user_messages(
+                            session_id=start.session.session_id,
+                            log_context=log_context,
+                        ),
+                    ),
                 )
                 conversation.append(tool_result_message)
                 self._append_messages(
@@ -340,6 +358,36 @@ class MinimalAgentLoop:
     ) -> None:
         if self._conversation_repository is not None:
             self._conversation_repository.append_messages(session_id, messages)
+
+    def _drain_pending_user_messages(
+        self,
+        *,
+        session_id: str,
+        log_context: dict[str, str],
+    ) -> tuple[TextBlock, ...]:
+        """从可选来源排出文本通知；来源异常不阻断用户任务。"""
+
+        if self._pending_user_message_source is None:
+            return ()
+        try:
+            notifications = self._pending_user_message_source.drain(
+                session_id=session_id
+            )
+            if isinstance(notifications, str) or not isinstance(notifications, Sequence):
+                raise TypeError("待处理 user 消息来源必须返回文本序列。")
+            if not all(
+                isinstance(notification, str) and notification.strip()
+                for notification in notifications
+            ):
+                raise ValueError("待处理 user 消息必须都是非空字符串。")
+            return tuple(TextBlock(text=notification) for notification in notifications)
+        except Exception:
+            logger.warning(
+                "读取待处理 user 消息失败，不影响模型调用。",
+                exc_info=True,
+                extra=log_context,
+            )
+            return ()
 
     def _trigger_user_prompt_submit(
         self,
