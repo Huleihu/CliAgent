@@ -1,6 +1,12 @@
 from datetime import datetime, timezone
 from pathlib import Path
+from threading import Event
 
+from local_dev_agent.background_tasks import (
+    BackgroundTask,
+    CommandExecutionResult,
+    InMemoryBackgroundTaskRepository,
+)
 from local_dev_agent.domain.state import SessionState
 from local_dev_agent.hooks import HookDecision, HookEvent, PreToolUseContext
 from local_dev_agent.main import create_permission_hook_runner
@@ -14,6 +20,7 @@ from local_dev_agent.main import default_workspace
 from local_dev_agent.main import create_output_budget_upgrade_policy
 from local_dev_agent.main import create_output_continuation_policy
 from local_dev_agent.main import execute_prompt
+from local_dev_agent.main import register_cli_background_task_capability
 from local_dev_agent.models.fake import FakeModel
 from local_dev_agent.models import DeepSeekSettings
 from local_dev_agent.context import ContextInputSnapshot, ContextManager
@@ -24,6 +31,7 @@ from local_dev_agent.models.ports import (
     ModelResponse,
     StopReason,
     TextBlock,
+    ToolResultBlock,
     ToolUseBlock,
 )
 from local_dev_agent.skills import SkillCatalog, SkillDocument, SkillMetadata
@@ -31,11 +39,13 @@ from local_dev_agent.runtime.loop import MinimalAgentLoop
 from local_dev_agent.storage.json_conversation_repository import JsonFileConversationRepository
 from local_dev_agent.storage.json_state_repository import JsonFileStateRepository
 from local_dev_agent.system_prompt import (
+    BACKGROUND_TASK_SYSTEM_PROMPT,
     TASK_DELEGATION_SYSTEM_PROMPT,
     TASK_SYSTEM_PROMPT,
     TODO_PLANNING_SYSTEM_PROMPT,
     create_cli_system_prompt_provider,
 )
+from local_dev_agent.todos import TodoReminderPolicy
 from local_dev_agent.tools import ToolCallRequest
 from local_dev_agent.tools.builtin import TaskTool
 
@@ -264,6 +274,176 @@ class ScriptedModel:
         return self._responses.pop(0)
 
 
+class SignalingBackgroundTaskRepository:
+    """在终态写回后发出事件，让 CLI 闭环测试不依赖线程竞速。"""
+
+    def __init__(self) -> None:
+        self._repository = InMemoryBackgroundTaskRepository()
+        self.terminal_saved = Event()
+
+    def add(self, task: BackgroundTask) -> BackgroundTask:
+        return self._repository.add(task)
+
+    def get(self, task_id: str) -> BackgroundTask | None:
+        return self._repository.get(task_id)
+
+    def list_for_session(self, session_id: str) -> tuple[BackgroundTask, ...]:
+        return self._repository.list_for_session(session_id)
+
+    def replace(self, task: BackgroundTask) -> BackgroundTask:
+        saved_task = self._repository.replace(task)
+        if saved_task.is_terminal:
+            self.terminal_saved.set()
+        return saved_task
+
+
+class CoordinatedCommandRunner:
+    """使用 Event 控制后台完成时点，避免测试使用真实等待。"""
+
+    def __init__(self) -> None:
+        self.started = Event()
+        self.release = Event()
+
+    def run(self, *, command: str, working_directory: Path) -> CommandExecutionResult:
+        self.started.set()
+        if not self.release.wait(timeout=1):
+            raise AssertionError("测试未允许后台命令结束。")
+        return CommandExecutionResult(exit_code=0, output="后台检查完成。")
+
+
+class BackgroundTaskCliModel:
+    """在两次父工具调用之间释放后台任务，验证通知回填闭环。"""
+
+    def __init__(
+        self,
+        command_runner: CoordinatedCommandRunner,
+        repository: SignalingBackgroundTaskRepository,
+    ) -> None:
+        self._command_runner = command_runner
+        self._repository = repository
+        self.requests: list[ModelRequest] = []
+
+    def generate(self, request: ModelRequest) -> ModelResponse:
+        self.requests.append(request)
+        request_number = len(self.requests)
+        if request_number == 1:
+            return ModelResponse(
+                stop_reason=StopReason.TOOL_USE,
+                content=(
+                    ToolUseBlock(
+                        tool_use_id="toolu-background",
+                        name="bash",
+                        input={
+                            "command": "python -m pytest",
+                            "run_in_background": True,
+                        },
+                    ),
+                ),
+            )
+        if request_number == 2:
+            if not self._command_runner.started.wait(timeout=1):
+                raise AssertionError("后台命令线程没有启动。")
+            self._command_runner.release.set()
+            if not self._repository.terminal_saved.wait(timeout=1):
+                raise AssertionError("后台任务终态没有写回。")
+            return ModelResponse(
+                stop_reason=StopReason.TOOL_USE,
+                content=(
+                    ToolUseBlock(
+                        tool_use_id="toolu-list-files",
+                        name="list_files",
+                        input={},
+                    ),
+                ),
+            )
+        if request_number == 3:
+            return ModelResponse.text_completion("后台检查完成，已继续检查工作区。")
+        raise AssertionError("测试模型收到超出预期的请求。")
+
+
+def test_cli_background_task_composition_continues_tools_and_delivers_notification(
+    tmp_path,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    state_root = workspace / "var" / "state"
+    repository = JsonFileStateRepository(state_root)
+    conversation_repository = JsonFileConversationRepository(state_root)
+    session = SessionState.create(
+        session_id="session-parent",
+        tenant_id="local",
+        user_id="local",
+        project_id=str(workspace),
+    )
+    repository.save_session(session)
+    background_repository = SignalingBackgroundTaskRepository()
+    command_runner = CoordinatedCommandRunner()
+    model = BackgroundTaskCliModel(command_runner, background_repository)
+    catalog = _skill_catalog()
+    registry = create_tool_registry(workspace, skill_catalog=catalog)
+    notification_source = register_cli_background_task_capability(
+        workspace=workspace,
+        registry=registry,
+        repository=background_repository,
+        command_runner=command_runner,
+    )
+    loop = MinimalAgentLoop(
+        repository,
+        model,
+        registry,
+        conversation_repository,
+        hook_runner=create_permission_hook_runner(workspace),
+        system_prompt_provider=create_cli_system_prompt_provider(
+            workspace=workspace,
+            registry=registry,
+            skill_catalog=catalog,
+        ),
+        todo_reminder_policy=TodoReminderPolicy(),
+        transient_recovery_executor=create_transient_recovery_executor(
+            DeepSeekSettings(
+                api_key="测试密钥",
+                base_url="https://example.test/anthropic",
+                model="primary-model",
+                max_tokens=8_000,
+            )
+        ),
+        pending_user_message_source=notification_source,
+    )
+
+    result = execute_prompt(
+        prompt="后台运行测试并继续检查文件。",
+        session=session,
+        repository=repository,
+        loop=loop,
+    )
+
+    first_request, after_background, after_file_listing = model.requests
+    assert result.response.text == "后台检查完成，已继续检查工作区。"
+    assert BACKGROUND_TASK_SYSTEM_PROMPT in first_request.system_prompt  # type: ignore[operator]
+    assert {"bash", "task_create", "todo_write"}.issubset(
+        definition.name for definition in first_request.tools
+    )
+    background_result = after_background.conversation[-1].content
+    assert len(background_result) == 1
+    assert isinstance(background_result[0], ToolResultBlock)
+    assert background_result[0].tool_use_id == "toolu-background"
+    assert background_result[0].content["bg_id"] == "bg_0001"
+    file_result_and_notification = after_file_listing.conversation[-1].content
+    assert len(file_result_and_notification) == 2
+    assert isinstance(file_result_and_notification[0], ToolResultBlock)
+    assert file_result_and_notification[0].tool_use_id == "toolu-list-files"
+    assert isinstance(file_result_and_notification[1], TextBlock)
+    assert "<task_id>bg_0001</task_id>" in file_result_and_notification[1].text
+    assert "<status>completed</status>" in file_result_and_notification[1].text
+    persisted_notifications = [
+        block.text
+        for message in conversation_repository.get_messages(session.session_id)
+        for block in message.content
+        if isinstance(block, TextBlock) and "<task_notification>" in block.text
+    ]
+    assert len(persisted_notifications) == 1
+
+
 def test_cli_composition_registers_task_system_tools_and_returns_persistent_results(
     tmp_path,
 ) -> None:
@@ -364,6 +544,10 @@ def test_cli_composition_registers_task_and_keeps_it_out_of_child_tools(tmp_path
     )
     catalog = _skill_catalog()
     registry = create_tool_registry(workspace, skill_catalog=catalog)
+    register_cli_background_task_capability(
+        workspace=workspace,
+        registry=registry,
+    )
     hook_runner = create_permission_hook_runner(workspace)
     registry.register(
         TaskTool(
@@ -403,6 +587,7 @@ def test_cli_composition_registers_task_and_keeps_it_out_of_child_tools(tmp_path
     assert "compact" in [definition.name for definition in parent_request.tools]
     assert "read_artifact" in [definition.name for definition in parent_request.tools]
     assert "load_skill" in [definition.name for definition in parent_request.tools]
+    assert "bash" in [definition.name for definition in parent_request.tools]
     assert "task" not in [definition.name for definition in child_request.tools]
     assert "task_create" not in [definition.name for definition in child_request.tools]
     assert "task_list" not in [definition.name for definition in child_request.tools]
@@ -413,6 +598,7 @@ def test_cli_composition_registers_task_and_keeps_it_out_of_child_tools(tmp_path
     assert "load_skill" not in [definition.name for definition in child_request.tools]
     assert "compact" not in [definition.name for definition in child_request.tools]
     assert "read_artifact" not in [definition.name for definition in child_request.tools]
+    assert "bash" not in [definition.name for definition in child_request.tools]
     assert child_request.system_prompt != prompt_provider.get_system_prompt()
     assert parent_follow_up.conversation[2].content[0].content["summary"] == (
         "子 Agent 返回 pytest。"

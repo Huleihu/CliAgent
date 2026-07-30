@@ -6,6 +6,16 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
+from local_dev_agent.background_tasks import (
+    BackgroundTaskIdGenerator,
+    BackgroundTaskNotificationSource,
+    BackgroundTaskRepository,
+    CommandRunner,
+    InMemoryBackgroundTaskRepository,
+    SequentialBackgroundTaskIdGenerator,
+    SubprocessCommandRunner,
+    ThreadedBackgroundTaskService,
+)
 from local_dev_agent.context import (
     ContextBudget,
     ContextManager,
@@ -64,6 +74,7 @@ from local_dev_agent.tasks import (
 from local_dev_agent.todos import JsonFileTodoRepository, TodoReminderPolicy
 from local_dev_agent.tools import ToolRegistry
 from local_dev_agent.tools.builtin import (
+    BashTool,
     CompactContextTool,
     EditFileTool,
     ListFilesTool,
@@ -143,6 +154,44 @@ def create_task_service(workspace: Path) -> TaskService:
         JsonFileTaskRepository(workspace / "var" / "state" / "tasks"),
         UuidTaskIdGenerator(),
     )
+
+
+def register_cli_background_task_capability(
+    *,
+    workspace: Path,
+    registry: ToolRegistry,
+    repository: BackgroundTaskRepository | None = None,
+    id_generator: BackgroundTaskIdGenerator | None = None,
+    command_runner: CommandRunner | None = None,
+) -> BackgroundTaskNotificationSource:
+    """组装父侧后台命令能力，并让工具与通知共享同一进程内仓储。"""
+
+    if not isinstance(registry, ToolRegistry):
+        raise TypeError("registry 必须是 ToolRegistry 对象。")
+    active_repository = (
+        repository if repository is not None else InMemoryBackgroundTaskRepository()
+    )
+    active_id_generator = (
+        id_generator
+        if id_generator is not None
+        else SequentialBackgroundTaskIdGenerator()
+    )
+    active_command_runner = (
+        command_runner if command_runner is not None else SubprocessCommandRunner()
+    )
+    service = ThreadedBackgroundTaskService(
+        active_repository,
+        active_id_generator,
+        active_command_runner,
+    )
+    registry.register(
+        BashTool(
+            workspace,
+            active_command_runner,
+            service,
+        )
+    )
+    return BackgroundTaskNotificationSource(active_repository)
 
 
 def create_permission_hook_runner(workspace: Path) -> HookRunner:
@@ -290,6 +339,10 @@ def main() -> None:
         skill_catalog=skill_catalog,
         task_service=task_service,
     )
+    background_task_notifications = register_cli_background_task_capability(
+        workspace=workspace,
+        registry=tool_registry,
+    )
     hook_runner = create_permission_hook_runner(workspace)
     subagent_runner = create_subagent_runner(
         repository=repository,
@@ -328,6 +381,7 @@ def main() -> None:
         transient_recovery_executor=create_transient_recovery_executor(settings),
         output_budget_upgrade_policy=create_output_budget_upgrade_policy(settings),
         output_continuation_policy=create_output_continuation_policy(),
+        pending_user_message_source=background_task_notifications,
     )
 
     print("Local Dev Agent")

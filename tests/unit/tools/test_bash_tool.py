@@ -103,7 +103,7 @@ def test_bash_tool_dispatches_explicit_background_command_with_execution_context
     )
 
     assert result == {
-        "task_id": "bg_0001",
+        "bg_id": "bg_0001",
         "status": BackgroundTaskStatus.RUNNING.value,
         "command": "git status",
     }
@@ -129,7 +129,7 @@ def test_bash_tool_uses_slow_command_heuristic_only_when_model_omits_the_flag(
         {"command": "python -m pytest", "run_in_background": False}
     )
 
-    assert background_result["task_id"] == "bg_0001"
+    assert background_result["bg_id"] == "bg_0001"
     assert foreground_result == {"exit_code": 0, "output": "命令完成"}
     assert len(background_service.calls) == 1
     assert command_runner.calls == [("python -m pytest", tmp_path.resolve())]

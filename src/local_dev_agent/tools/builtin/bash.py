@@ -118,7 +118,7 @@ class BashTool(Tool):
         except Exception as error:
             raise ToolExecutionError(f"后台命令派发失败：{error}") from error
         return {
-            "task_id": task.task_id,
+            "bg_id": task.task_id,
             "status": task.status.value,
             "command": task.command,
         }

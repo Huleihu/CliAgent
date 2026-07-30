@@ -31,6 +31,10 @@ TASK_DELEGATION_SYSTEM_PROMPT = """对于需要独立调查、实现或验证的
 
 委派只返回结构化结论和关联信息；收到结果后由你验收结论，并在需要时自行验证共享工作区中的副作用。简单任务不要委派。"""
 
+BACKGROUND_TASK_SYSTEM_PROMPT = """对于适合异步执行的耗时命令，可显式选择后台运行，并在收到后台任务标识后继续处理不依赖其结果的工作。
+
+后台任务完成通知会在后续模型请求中到达；收到通知后检查状态、退出码和输出摘要，再决定后续动作。短命令以及必须立即读取完整结果的命令应前台执行。"""
+
 CONTEXT_COMPACTION_SYSTEM_PROMPT = """当当前历史已冗余或需要切换任务时，可请求 Runtime 在下一轮压缩上下文。
 
 上下文压缩不会修改完整会话历史；不要把它当作文件或消息编辑工具。"""
@@ -98,6 +102,12 @@ def create_cli_system_prompt_assembler(
                 "delegation",
                 lambda context: TASK_DELEGATION_SYSTEM_PROMPT
                 if context.has_tool("task")
+                else None,
+            ),
+            SystemPromptSection(
+                "background_tasks",
+                lambda context: BACKGROUND_TASK_SYSTEM_PROMPT
+                if context.has_tool("bash")
                 else None,
             ),
             SystemPromptSection(

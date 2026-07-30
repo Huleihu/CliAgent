@@ -7,6 +7,7 @@ from .assembly import (
     SystemPromptSectionRenderer,
 )
 from .cli import (
+    BACKGROUND_TASK_SYSTEM_PROMPT,
     CLI_IDENTITY_SYSTEM_PROMPT,
     CONTEXT_COMPACTION_SYSTEM_PROMPT,
     TASK_DELEGATION_SYSTEM_PROMPT,
@@ -20,6 +21,7 @@ from .ports import SystemPromptProvider
 from .provider import ContextualSystemPromptProvider
 
 __all__ = [
+    "BACKGROUND_TASK_SYSTEM_PROMPT",
     "CachedSystemPromptAssembler",
     "CLI_IDENTITY_SYSTEM_PROMPT",
     "CONTEXT_COMPACTION_SYSTEM_PROMPT",
