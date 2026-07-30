@@ -22,3 +22,10 @@ class BackgroundTaskNotFoundError(ValueError):
 
     def __init__(self, *, task_id: str) -> None:
         super().__init__(f"后台任务“{task_id}”不存在。")
+
+
+class CommandExecutionTimeoutError(TimeoutError):
+    """命令超过受控执行时限而被执行适配器终止。"""
+
+    def __init__(self, *, timeout_seconds: float) -> None:
+        super().__init__(f"命令执行超过 {timeout_seconds:g} 秒时限。")

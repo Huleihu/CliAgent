@@ -1,5 +1,6 @@
 """本地 Runtime 随发行版提供的受控工具。"""
 
+from .bash import BashTool
 from .compact import CompactContextTool
 from .edit_file import EditFileTool
 from .list_files import ListFilesTool
@@ -17,6 +18,7 @@ from .write_file import WriteFileTool
 
 __all__ = [
     "CompactContextTool",
+    "BashTool",
     "EditFileTool",
     "ListFilesTool",
     "LoadSkillTool",

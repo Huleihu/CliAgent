@@ -3,10 +3,12 @@
 from .errors import (
     BackgroundTaskAlreadyExistsError,
     BackgroundTaskNotFoundError,
+    CommandExecutionTimeoutError,
     InvalidBackgroundTaskTransitionError,
 )
 from .identifiers import SequentialBackgroundTaskIdGenerator
 from .in_memory import InMemoryBackgroundTaskRepository
+from .policy import BackgroundExecutionPolicy
 from .ports import (
     BackgroundTaskExecutionService,
     BackgroundTaskIdGenerator,
@@ -15,6 +17,7 @@ from .ports import (
 )
 from .service import ThreadedBackgroundTaskService
 from .schema import BackgroundTask, BackgroundTaskStatus, CommandExecutionResult
+from .subprocess_runner import SubprocessCommandRunner
 
 __all__ = [
     "BackgroundTask",
@@ -24,10 +27,13 @@ __all__ = [
     "BackgroundTaskNotFoundError",
     "BackgroundTaskRepository",
     "BackgroundTaskStatus",
+    "BackgroundExecutionPolicy",
     "CommandExecutionResult",
+    "CommandExecutionTimeoutError",
     "CommandRunner",
     "InvalidBackgroundTaskTransitionError",
     "InMemoryBackgroundTaskRepository",
     "SequentialBackgroundTaskIdGenerator",
+    "SubprocessCommandRunner",
     "ThreadedBackgroundTaskService",
 ]
