@@ -36,3 +36,17 @@ class CommandRunner(Protocol):
     def run(self, *, command: str, working_directory: Path) -> CommandExecutionResult:
         """返回命令退出码与输出；执行异常交由调用方转为任务失败。"""
 
+
+class BackgroundTaskExecutionService(Protocol):
+    """为工具层启动后台任务的应用服务端口。"""
+
+    def start(
+        self,
+        *,
+        session_id: str,
+        run_id: str,
+        tool_call_id: str,
+        command: str,
+        working_directory: Path,
+    ) -> BackgroundTask:
+        """持久化运行中快照并启动异步执行，立即返回任务标识。"""

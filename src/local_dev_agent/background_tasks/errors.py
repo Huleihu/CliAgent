@@ -9,3 +9,16 @@ class InvalidBackgroundTaskTransitionError(ValueError):
             f"后台任务“{task_id}”当前状态为“{status}”，不能转换为“{target_status}”。"
         )
 
+
+class BackgroundTaskAlreadyExistsError(ValueError):
+    """后台任务仓储拒绝重复写入相同标识。"""
+
+    def __init__(self, *, task_id: str) -> None:
+        super().__init__(f"后台任务“{task_id}”已存在。")
+
+
+class BackgroundTaskNotFoundError(ValueError):
+    """后台任务仓储找不到需要替换的既有任务。"""
+
+    def __init__(self, *, task_id: str) -> None:
+        super().__init__(f"后台任务“{task_id}”不存在。")
