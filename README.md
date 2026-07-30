@@ -72,6 +72,14 @@ shell 命令的工作目录固定为 `sandbox/`，并完整经过参数校验、
 送达。后台任务首版只保存在当前进程内并由 daemon 线程执行，退出 CLI 后不会恢复仍在
 运行的任务。
 
+父 Agent 还可创建、查看和取消五段式 cron 定时任务。调度线程只根据本地时区判断
+到期并写入内存 Trigger 队列；独立的队列处理线程在共享 Agent 执行租约空闲时，才为
+该 Trigger 启动新的 Run。支持 `*`、`*/N`、`N`、`N-M` 与 `N,M,...`；日和星期同时
+受限时采用 cron 标准 OR 语义。一次性任务成功入队后立即移除，同一任务同一 UTC 分钟
+不会重复触发。session-only 定义仅在当前进程和创建 Session 中存在；durable 定义保存到
+`sandbox/var/state/cron/scheduled_tasks.json` 并在下次 CLI 启动时恢复，但应用关闭期间
+不会触发。Cron 仅注册给父 Agent，子 Agent 仍只拥有四项文件工具。
+
 同一进程内的后续输入会复用该 Session 已持久化的用户消息、工具调用、工具结果与助手
 文本，因此“读取它的前 20 行”能够引用上一轮已发现的文件。消息历史保存在
 `sandbox/var/state/conversations/`。

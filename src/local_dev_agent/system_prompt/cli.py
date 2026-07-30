@@ -35,6 +35,10 @@ BACKGROUND_TASK_SYSTEM_PROMPT = """对于适合异步执行的耗时命令，可
 
 后台任务完成通知会在后续模型请求中到达；收到通知后检查状态、退出码和输出摘要，再决定后续动作。短命令以及必须立即读取完整结果的命令应前台执行。"""
 
+CRON_SCHEDULER_SYSTEM_PROMPT = """可以创建、查看或取消五段式 cron 定时任务。
+
+定时任务到期后由独立调度与队列处理线程在 Agent 空闲时启动新的 Run；durable 仅保存任务定义以供下次进程启动恢复，不保证应用关闭期间仍会执行。创建前应确认时间表达式、任务 prompt、是否循环以及是否需要 durable。"""
+
 CONTEXT_COMPACTION_SYSTEM_PROMPT = """当当前历史已冗余或需要切换任务时，可请求 Runtime 在下一轮压缩上下文。
 
 上下文压缩不会修改完整会话历史；不要把它当作文件或消息编辑工具。"""
@@ -108,6 +112,15 @@ def create_cli_system_prompt_assembler(
                 "background_tasks",
                 lambda context: BACKGROUND_TASK_SYSTEM_PROMPT
                 if context.has_tool("bash")
+                else None,
+            ),
+            SystemPromptSection(
+                "cron_scheduler",
+                lambda context: CRON_SCHEDULER_SYSTEM_PROMPT
+                if all(
+                    context.has_tool(tool_name)
+                    for tool_name in ("schedule_cron", "list_crons", "cancel_cron")
+                )
                 else None,
             ),
             SystemPromptSection(

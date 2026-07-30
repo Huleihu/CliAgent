@@ -4,6 +4,7 @@ from collections.abc import Callable
 from threading import Event, Thread
 
 from .ports import CronThreadFactory, CronWaiter
+from .processor import CronQueueProcessor
 from .scheduler import CronScheduler
 
 
@@ -67,3 +68,56 @@ class CronSchedulerRunner:
 
     def _run(self) -> None:
         self._scheduler.run(stop_event=self._stop_event, waiter=self._waiter)
+
+
+class CronQueueProcessorRunner:
+    """在独立 daemon 线程中轮询 Queue Processor，不参与到期判断。"""
+
+    def __init__(
+        self,
+        *,
+        processor: CronQueueProcessor,
+        waiter: CronWaiter,
+        thread_factory: CronThreadFactory,
+        check_interval_seconds: float = 0.2,
+    ) -> None:
+        if not callable(getattr(processor, "process_once", None)):
+            raise TypeError("processor 必须提供 process_once 方法。")
+        if not callable(getattr(waiter, "wait", None)):
+            raise TypeError("waiter 必须提供 wait 方法。")
+        if not callable(getattr(thread_factory, "start", None)):
+            raise TypeError("thread_factory 必须提供 start 方法。")
+        if (
+            isinstance(check_interval_seconds, bool)
+            or not isinstance(check_interval_seconds, (int, float))
+            or check_interval_seconds <= 0
+        ):
+            raise ValueError("字段“check_interval_seconds”必须是正数。")
+        self._processor = processor
+        self._waiter = waiter
+        self._thread_factory = thread_factory
+        self._check_interval_seconds = float(check_interval_seconds)
+        self._stop_event = Event()
+        self._thread: Thread | None = None
+
+    def start(self) -> Thread:
+        """只启动一次 Queue Processor，避免多个消费者并发确认同一队首。"""
+
+        if self._thread is not None:
+            raise RuntimeError("Cron Queue Processor 已启动。")
+        self._thread = self._thread_factory.start(
+            target=self._run,
+            name="cron-queue-processor",
+        )
+        return self._thread
+
+    def stop(self) -> None:
+        """请求队列轮询停止；不 join，CLI 可立即退出。"""
+
+        self._stop_event.set()
+
+    def _run(self) -> None:
+        while not self._stop_event.is_set():
+            self._processor.process_once()
+            if self._waiter.wait(self._stop_event, self._check_interval_seconds):
+                return

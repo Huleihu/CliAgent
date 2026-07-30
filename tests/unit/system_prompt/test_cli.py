@@ -5,6 +5,7 @@ import pytest
 from local_dev_agent.skills import SkillCatalog, SkillDocument, SkillMetadata
 from local_dev_agent.system_prompt import (
     BACKGROUND_TASK_SYSTEM_PROMPT,
+    CRON_SCHEDULER_SYSTEM_PROMPT,
     CLI_IDENTITY_SYSTEM_PROMPT,
     CONTEXT_COMPACTION_SYSTEM_PROMPT,
     TASK_DELEGATION_SYSTEM_PROMPT,
@@ -82,6 +83,9 @@ def test_cli_assembler_loads_only_guidance_backed_by_registered_tools(tmp_path) 
             "task_complete",
             "task",
             "bash",
+            "schedule_cron",
+            "list_crons",
+            "cancel_cron",
             "compact",
             "load_skill",
         ),
@@ -96,6 +100,7 @@ def test_cli_assembler_loads_only_guidance_backed_by_registered_tools(tmp_path) 
     assert TASK_SYSTEM_PROMPT in prompt
     assert TASK_DELEGATION_SYSTEM_PROMPT in prompt
     assert BACKGROUND_TASK_SYSTEM_PROMPT in prompt
+    assert CRON_SCHEDULER_SYSTEM_PROMPT in prompt
     assert CONTEXT_COMPACTION_SYSTEM_PROMPT in prompt
     assert "code-review" in prompt
     assert "审查代码中的缺陷。" in prompt
@@ -108,6 +113,9 @@ def test_cli_assembler_loads_only_guidance_backed_by_registered_tools(tmp_path) 
     assert "task_complete" not in prompt
     assert "task" not in prompt
     assert "bash" not in prompt
+    assert "schedule_cron" not in prompt
+    assert "list_crons" not in prompt
+    assert "cancel_cron" not in prompt
     assert "compact" not in prompt
     assert "load_skill" not in prompt
 
@@ -156,6 +164,26 @@ def test_cli_assembler_requires_the_parent_command_tool_for_background_guidance(
 
     assert BACKGROUND_TASK_SYSTEM_PROMPT not in prompt_without_capability  # type: ignore[operator]
     assert BACKGROUND_TASK_SYSTEM_PROMPT in prompt_with_capability  # type: ignore[operator]
+
+
+def test_cli_assembler_requires_all_parent_cron_tools_before_loading_guidance(tmp_path) -> None:
+    assembler = create_cli_system_prompt_assembler(_catalog())
+
+    incomplete_prompt = assembler.get(
+        create_cli_system_prompt_context(
+            workspace=tmp_path,
+            registry=_registry("schedule_cron", "list_crons"),
+        )
+    )
+    complete_prompt = assembler.get(
+        create_cli_system_prompt_context(
+            workspace=tmp_path,
+            registry=_registry("schedule_cron", "list_crons", "cancel_cron"),
+        )
+    )
+
+    assert CRON_SCHEDULER_SYSTEM_PROMPT not in incomplete_prompt  # type: ignore[operator]
+    assert CRON_SCHEDULER_SYSTEM_PROMPT in complete_prompt  # type: ignore[operator]
 
 
 def test_cli_assembler_reports_an_empty_skill_catalog_only_when_loading_is_available(tmp_path) -> None:

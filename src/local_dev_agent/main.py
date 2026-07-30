@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -25,6 +26,26 @@ from local_dev_agent.context import (
     HistorySummaryCheckpointService,
     ModelConversationSummarizer,
     ToolResultBudgetCompactor,
+)
+from local_dev_agent.cron import (
+    CronClock,
+    CronQueueProcessor,
+    CronQueueProcessorRunner,
+    CronScheduler,
+    CronSchedulerRunner,
+    CronThreadFactory,
+    CronWaiter,
+    CronTaskCatalog,
+    CronTaskService,
+    DaemonCronThreadFactory,
+    EventCronWaiter,
+    InMemoryCronTaskRepository,
+    InMemoryCronTriggerQueue,
+    JsonFileCronTaskRepository,
+    LockCronExecutionGate,
+    SessionBoundCronTriggerConsumer,
+    SystemCronClock,
+    UuidCronTaskIdGenerator,
 )
 from local_dev_agent.domain.messages import UserInputEvent
 from local_dev_agent.domain.state import SessionState
@@ -81,6 +102,9 @@ from local_dev_agent.tools.builtin import (
     LoadSkillTool,
     ReadFileTool,
     ReadArtifactTool,
+    ScheduleCronTool,
+    ListCronsTool,
+    CancelCronTool,
     TaskTool,
     TaskClaimTool,
     TaskCompleteTool,
@@ -100,6 +124,27 @@ CLI_CONTEXT_SAFETY_MARGIN_TOKENS = 13_000
 
 CLI_HISTORY_SUMMARY_CHECKPOINT_TAIL_MESSAGE_COUNT = 10
 """重建历史摘要检查点时保留的最近原始消息数量。"""
+
+
+@dataclass(slots=True)
+class CliCronCapability:
+    """CLI 持有的 Cron 生命周期与共享 Agent 执行租约。"""
+
+    execution_gate: LockCronExecutionGate
+    scheduler_runner: CronSchedulerRunner
+    processor_runner: CronQueueProcessorRunner
+
+    def start(self) -> None:
+        """启动彼此独立的调度和队列处理 daemon 线程。"""
+
+        self.scheduler_runner.start()
+        self.processor_runner.start()
+
+    def stop(self) -> None:
+        """请求两个 daemon 线程停止，不阻塞 CLI 的退出路径。"""
+
+        self.scheduler_runner.stop()
+        self.processor_runner.stop()
 
 
 def execute_prompt(
@@ -192,6 +237,89 @@ def register_cli_background_task_capability(
         )
     )
     return BackgroundTaskNotificationSource(active_repository)
+
+
+def register_cli_cron_capability(
+    *,
+    workspace: Path,
+    registry: ToolRegistry,
+    session: SessionState,
+    repository: StateRepository,
+    loop: MinimalAgentLoop,
+    clock: CronClock | None = None,
+    scheduler_waiter: CronWaiter | None = None,
+    processor_waiter: CronWaiter | None = None,
+    thread_factory: CronThreadFactory | None = None,
+) -> CliCronCapability:
+    """装配父侧 Cron 工具和两条后台线程，不让 Cron 领域依赖 Runtime。"""
+
+    if not isinstance(workspace, Path):
+        raise TypeError("workspace 必须是 Path 对象。")
+    if not isinstance(registry, ToolRegistry):
+        raise TypeError("registry 必须是 ToolRegistry 对象。")
+    if not isinstance(session, SessionState):
+        raise TypeError("session 必须是 SessionState 对象。")
+    active_clock = clock if clock is not None else SystemCronClock()
+    active_session_repository = InMemoryCronTaskRepository()
+    active_durable_repository = JsonFileCronTaskRepository(
+        workspace / "var" / "state" / "cron"
+    )
+    service = CronTaskService(
+        session_repository=active_session_repository,
+        durable_repository=active_durable_repository,
+        id_generator=UuidCronTaskIdGenerator(),
+        clock=active_clock,
+    )
+    registry.register(ScheduleCronTool(service))
+    registry.register(ListCronsTool(service))
+    registry.register(CancelCronTool(service))
+
+    trigger_queue = InMemoryCronTriggerQueue()
+    execution_gate = LockCronExecutionGate()
+
+    def run_scheduled_prompt(prompt: str) -> None:
+        result = execute_prompt(
+            prompt=prompt,
+            session=session,
+            repository=repository,
+            loop=loop,
+        )
+        print(f"\n[cron] {result.response.text}")
+
+    consumer = SessionBoundCronTriggerConsumer(
+        session_id=session.session_id,
+        run_prompt=run_scheduled_prompt,
+    )
+    scheduler = CronScheduler(
+        repository=CronTaskCatalog(
+            session_repository=active_session_repository,
+            durable_repository=active_durable_repository,
+        ),
+        trigger_queue=trigger_queue,
+        clock=active_clock,
+        session_id=session.session_id,
+    )
+    processor = CronQueueProcessor(
+        trigger_queue=trigger_queue,
+        gate=execution_gate,
+        consumer=consumer,
+    )
+    active_thread_factory = (
+        thread_factory if thread_factory is not None else DaemonCronThreadFactory()
+    )
+    return CliCronCapability(
+        execution_gate=execution_gate,
+        scheduler_runner=CronSchedulerRunner(
+            scheduler=scheduler,
+            waiter=scheduler_waiter if scheduler_waiter is not None else EventCronWaiter(),
+            thread_factory=active_thread_factory,
+        ),
+        processor_runner=CronQueueProcessorRunner(
+            processor=processor,
+            waiter=processor_waiter if processor_waiter is not None else EventCronWaiter(),
+            thread_factory=active_thread_factory,
+        ),
+    )
 
 
 def create_permission_hook_runner(workspace: Path) -> HookRunner:
@@ -383,27 +511,42 @@ def main() -> None:
         output_continuation_policy=create_output_continuation_policy(),
         pending_user_message_source=background_task_notifications,
     )
+    cron_capability = register_cli_cron_capability(
+        workspace=workspace,
+        registry=tool_registry,
+        session=session,
+        repository=repository,
+        loop=loop,
+    )
+    cron_capability.start()
 
     print("Local Dev Agent")
     print("输入问题并回车发送。输入 q、exit 或空行退出。\n")
-    while True:
-        try:
-            prompt = input("local-dev-agent >> ").strip()
-        except (EOFError, KeyboardInterrupt):
-            print()
-            return
-        if prompt.lower() in {"", "q", "exit"}:
-            return
+    try:
+        while True:
+            try:
+                prompt = input("local-dev-agent >> ").strip()
+            except (EOFError, KeyboardInterrupt):
+                print()
+                return
+            if prompt.lower() in {"", "q", "exit"}:
+                return
 
-        result = execute_prompt(
-            prompt=prompt,
-            session=session,
-            repository=repository,
-            loop=loop,
-        )
-        session = result.session
-        print(result.response.text)
-        print()
+            cron_capability.execution_gate.acquire()
+            try:
+                result = execute_prompt(
+                    prompt=prompt,
+                    session=session,
+                    repository=repository,
+                    loop=loop,
+                )
+            finally:
+                cron_capability.execution_gate.release()
+            session = result.session
+            print(result.response.text)
+            print()
+    finally:
+        cron_capability.stop()
 
 
 if __name__ == "__main__":

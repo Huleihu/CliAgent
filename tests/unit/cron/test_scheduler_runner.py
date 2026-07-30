@@ -2,7 +2,7 @@ from threading import Event
 
 import pytest
 
-from local_dev_agent.cron import CronSchedulerRunner
+from local_dev_agent.cron import CronQueueProcessorRunner, CronSchedulerRunner
 
 
 class RecordingScheduler:
@@ -36,6 +36,17 @@ class InlineThreadFactory:
         return object()
 
 
+class RecordingProcessor:
+    """记录队列处理轮次，验证运行器不依赖真实 sleep。"""
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def process_once(self) -> bool:
+        self.calls += 1
+        return False
+
+
 def test_scheduler_runner_uses_injected_waiter_and_thread_factory() -> None:
     scheduler = RecordingScheduler()
     factory = InlineThreadFactory()
@@ -49,5 +60,22 @@ def test_scheduler_runner_uses_injected_waiter_and_thread_factory() -> None:
 
     assert scheduler.calls == 1
     assert factory.names == ["cron-scheduler"]
+    with pytest.raises(RuntimeError, match="已启动"):
+        runner.start()
+
+
+def test_queue_processor_runner_uses_injected_waiter_and_thread_factory() -> None:
+    processor = RecordingProcessor()
+    factory = InlineThreadFactory()
+    runner = CronQueueProcessorRunner(
+        processor=processor,  # type: ignore[arg-type]
+        waiter=StopOnWait(),
+        thread_factory=factory,  # type: ignore[arg-type]
+    )
+
+    runner.start()
+
+    assert processor.calls == 1
+    assert factory.names == ["cron-queue-processor"]
     with pytest.raises(RuntimeError, match="已启动"):
         runner.start()

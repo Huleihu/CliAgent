@@ -21,6 +21,7 @@ from local_dev_agent.main import create_output_budget_upgrade_policy
 from local_dev_agent.main import create_output_continuation_policy
 from local_dev_agent.main import execute_prompt
 from local_dev_agent.main import register_cli_background_task_capability
+from local_dev_agent.main import register_cli_cron_capability
 from local_dev_agent.models.fake import FakeModel
 from local_dev_agent.models import DeepSeekSettings
 from local_dev_agent.context import ContextInputSnapshot, ContextManager
@@ -46,7 +47,8 @@ from local_dev_agent.system_prompt import (
     create_cli_system_prompt_provider,
 )
 from local_dev_agent.todos import TodoReminderPolicy
-from local_dev_agent.tools import ToolCallRequest
+from local_dev_agent.subagents import SubagentPolicy, SubagentToolRegistryFactory
+from local_dev_agent.tools import ToolCallRequest, ToolExecutionContext
 from local_dev_agent.tools.builtin import TaskTool
 
 
@@ -359,6 +361,96 @@ class BackgroundTaskCliModel:
         if request_number == 3:
             return ModelResponse.text_completion("后台检查完成，已继续检查工作区。")
         raise AssertionError("测试模型收到超出预期的请求。")
+
+
+class FixedCronClock:
+    """为 CLI Cron 装配测试提供固定的到期分钟。"""
+
+    def now(self) -> datetime:
+        return datetime(2026, 7, 30, 9, tzinfo=timezone.utc)
+
+
+class StopAfterFirstCronWait:
+    """首次轮询后停止对应 Runner，避免测试依赖真实等待。"""
+
+    def wait(self, stop_event: Event, timeout_seconds: float) -> bool:
+        stop_event.set()
+        return True
+
+
+class InlineCronThreadFactory:
+    """同步运行两个 cron 线程目标，稳定验证 CLI 组合。"""
+
+    def __init__(self) -> None:
+        self.names: list[str] = []
+
+    def start(self, *, target, name: str) -> object:
+        self.names.append(name)
+        target()
+        return object()
+
+
+def test_cli_cron_composition_runs_due_prompt_and_keeps_tools_parent_only(tmp_path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    state_root = workspace / "var" / "state"
+    repository = JsonFileStateRepository(state_root)
+    conversation_repository = JsonFileConversationRepository(state_root)
+    session = SessionState.create(
+        session_id="session-parent",
+        tenant_id="local",
+        user_id="local",
+        project_id=str(workspace),
+    )
+    repository.save_session(session)
+    catalog = _skill_catalog()
+    registry = create_tool_registry(workspace, skill_catalog=catalog)
+    model = FakeModel(ModelResponse.text_completion("定时检查完成。"))
+    loop = MinimalAgentLoop(
+        repository,
+        model,
+        registry,
+        conversation_repository,
+        system_prompt_provider=create_cli_system_prompt_provider(
+            workspace=workspace,
+            registry=registry,
+            skill_catalog=catalog,
+        ),
+    )
+    factory = InlineCronThreadFactory()
+    capability = register_cli_cron_capability(
+        workspace=workspace,
+        registry=registry,
+        session=session,
+        repository=repository,
+        loop=loop,
+        clock=FixedCronClock(),
+        scheduler_waiter=StopAfterFirstCronWait(),
+        processor_waiter=StopAfterFirstCronWait(),
+        thread_factory=factory,  # type: ignore[arg-type]
+    )
+    registry.get("schedule_cron").run(
+        {"cron": "0 9 * * *", "prompt": "运行定时检查。"},
+        context=ToolExecutionContext(
+            session_id=session.session_id,
+            run_id="run-registration",
+            step_id="step-registration",
+        ),
+    )
+
+    capability.start()
+    capability.stop()
+
+    request = model.requests[0]
+    assert request.conversation[0].content[0].text == "运行定时检查。"
+    assert {"schedule_cron", "list_crons", "cancel_cron"}.issubset(
+        definition.name for definition in request.tools
+    )
+    child_registry = SubagentToolRegistryFactory(registry, SubagentPolicy()).create()
+    assert not {"schedule_cron", "list_crons", "cancel_cron"}.intersection(
+        definition.name for definition in child_registry.list_definitions()
+    )
+    assert factory.names == ["cron-scheduler", "cron-queue-processor"]
 
 
 def test_cli_background_task_composition_continues_tools_and_delivers_notification(

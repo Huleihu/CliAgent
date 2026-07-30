@@ -12,5 +12,10 @@ class LockCronExecutionGate:
     def try_acquire(self) -> bool:
         return self._lock.acquire(blocking=False)
 
+    def acquire(self) -> None:
+        """为前台输入等待租约，使其与后台 cron Run 串行执行。"""
+
+        self._lock.acquire()
+
     def release(self) -> None:
         self._lock.release()
