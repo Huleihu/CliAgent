@@ -60,6 +60,8 @@ class JsonFileTeamInboxRepository:
                 content=draft.content,
                 idempotency_key=draft.idempotency_key,
                 created_at=draft.created_at,
+                request_id=draft.request_id,
+                protocol_decision=draft.protocol_decision,
             )
             self._save(path, next_sequence=next_sequence + 1, messages=(*messages, message))
             return message
@@ -259,4 +261,6 @@ def _same_delivery(message: TeamMessage, draft: TeamMessageDraft) -> bool:
         and message.recipient_member_id == draft.recipient_member_id
         and message.message_type is draft.message_type
         and message.content == draft.content
+        and message.request_id == draft.request_id
+        and message.protocol_decision is draft.protocol_decision
     )

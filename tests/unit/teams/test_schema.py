@@ -13,10 +13,19 @@ from local_dev_agent.teams import (
     TeamMessageDeliveryStatus,
     TeamMessageType,
     TeamPromptExecution,
+    TeamProtocolDecision,
+    TeamProtocolState,
+    TeamProtocolStatus,
+    TeamProtocolType,
 )
 from local_dev_agent.teams.errors import (
     InvalidTeamAssignmentTransitionError,
     InvalidTeamMessageTransitionError,
+    TeamProtocolAlreadyResolvedError,
+    TeamProtocolMessageTypeMismatchError,
+    TeamProtocolParticipantMismatchError,
+    TeamProtocolPayloadMismatchError,
+    TeamProtocolRequestIdMismatchError,
 )
 
 
@@ -204,4 +213,159 @@ def test_prompt_execution_requires_runtime_links_but_not_model_specific_types() 
             session_id="session-alice",
             run_id="run-001",
             response_text=object(),  # type: ignore[arg-type]
+        )
+
+
+def _protocol_state() -> TeamProtocolState:
+    return TeamProtocolState.create(
+        request_id="request-001",
+        team_id="team-001",
+        protocol_type=TeamProtocolType.PLAN_APPROVAL,
+        sender_member_id="member-001",
+        target_member_id="lead-001",
+        payload="先拆分认证适配器，再迁移调用方。",
+        created_at=TIMESTAMP,
+    )
+
+
+def _protocol_response(
+    *,
+    message_id: str = "response-001",
+    message_type: TeamMessageType = TeamMessageType.PLAN_APPROVAL_RESPONSE,
+    sender_member_id: str = "lead-001",
+    recipient_member_id: str = "member-001",
+    decision: TeamProtocolDecision = TeamProtocolDecision.APPROVED,
+) -> TeamMessage:
+    return TeamMessage.create(
+        message_id=message_id,
+        team_id="team-001",
+        sender_member_id=sender_member_id,
+        recipient_member_id=recipient_member_id,
+        sequence=1,
+        message_type=message_type,
+        content="批准，可以开始。",
+        idempotency_key=f"protocol:{message_id}",
+        request_id="request-001",
+        protocol_decision=decision,
+        created_at=TIMESTAMP + timedelta(seconds=1),
+    )
+
+
+def test_protocol_message_fields_are_structured_and_not_allowed_on_plain_messages() -> None:
+    request = TeamMessage.create(
+        message_id="request-message-001",
+        team_id="team-001",
+        sender_member_id="member-001",
+        recipient_member_id="lead-001",
+        sequence=1,
+        message_type=TeamMessageType.PLAN_APPROVAL_REQUEST,
+        content="先拆分认证适配器，再迁移调用方。",
+        idempotency_key="protocol:request-001",
+        request_id="request-001",
+        created_at=TIMESTAMP,
+    )
+
+    assert request.request_id == "request-001"
+    assert request.protocol_decision is None
+    with pytest.raises(ValueError, match="普通 Team 消息"):
+        TeamMessage.create(
+            team_id="team-001",
+            sender_member_id="lead-001",
+            recipient_member_id="member-001",
+            sequence=1,
+            message_type=TeamMessageType.PLAIN,
+            content="普通消息。",
+            idempotency_key="plain-001",
+            request_id="request-001",
+            created_at=TIMESTAMP,
+        )
+    with pytest.raises(ValueError, match="必须包含 TeamProtocolDecision"):
+        TeamMessage.create(
+            team_id="team-001",
+            sender_member_id="lead-001",
+            recipient_member_id="member-001",
+            sequence=1,
+            message_type=TeamMessageType.PLAN_APPROVAL_RESPONSE,
+            content="缺少决议。",
+            idempotency_key="protocol:response-invalid",
+            request_id="request-001",
+            created_at=TIMESTAMP,
+        )
+
+
+def test_protocol_state_matches_response_and_keeps_exact_replay_idempotent() -> None:
+    state = _protocol_state()
+    response = _protocol_response()
+
+    resolved = state.match_response(response)
+
+    assert state.status is TeamProtocolStatus.PENDING
+    assert resolved.status is TeamProtocolStatus.APPROVED
+    assert resolved.decision is TeamProtocolDecision.APPROVED
+    assert resolved.response_message_id == response.message_id
+    assert resolved.response_content == response.content
+    assert resolved.resolved_at == response.created_at
+    assert resolved.match_response(response) is resolved
+
+
+def test_protocol_state_rejects_response_type_or_participant_mismatch() -> None:
+    state = _protocol_state()
+
+    wrong_request = TeamMessage.create(
+        message_id="response-wrong-request",
+        team_id="team-001",
+        sender_member_id="lead-001",
+        recipient_member_id="member-001",
+        sequence=1,
+        message_type=TeamMessageType.PLAN_APPROVAL_RESPONSE,
+        content="批准。",
+        idempotency_key="protocol:wrong-request",
+        request_id="request-002",
+        protocol_decision=TeamProtocolDecision.APPROVED,
+        created_at=TIMESTAMP + timedelta(seconds=1),
+    )
+    with pytest.raises(TeamProtocolRequestIdMismatchError, match="request_id 不匹配"):
+        state.match_response(wrong_request)
+    with pytest.raises(TeamProtocolMessageTypeMismatchError, match="期望消息类型"):
+        state.match_response(
+            _protocol_response(message_type=TeamMessageType.SHUTDOWN_RESPONSE)
+        )
+    with pytest.raises(TeamProtocolParticipantMismatchError, match="参与方不匹配"):
+        state.match_response(
+            _protocol_response(
+                sender_member_id="member-002",
+                recipient_member_id="member-001",
+            )
+        )
+    assert state.status is TeamProtocolStatus.PENDING
+
+
+def test_protocol_state_validates_request_payload_before_dispatch() -> None:
+    state = _protocol_state()
+    request = TeamMessage.create(
+        message_id="request-message-001",
+        team_id="team-001",
+        sender_member_id="member-001",
+        recipient_member_id="lead-001",
+        sequence=1,
+        message_type=TeamMessageType.PLAN_APPROVAL_REQUEST,
+        content="改成另一份未经登记的计划。",
+        idempotency_key="protocol:request-001",
+        request_id="request-001",
+        created_at=TIMESTAMP,
+    )
+
+    with pytest.raises(TeamProtocolPayloadMismatchError, match="登记载荷不匹配"):
+        state.validate_request_message(request)
+
+
+def test_protocol_state_rejects_conflicting_response_after_resolution() -> None:
+    resolved = _protocol_state().match_response(_protocol_response())
+
+    with pytest.raises(TeamProtocolAlreadyResolvedError, match="不能接受不同响应"):
+        resolved.match_response(
+            _protocol_response(
+                message_id="response-002",
+                decision=TeamProtocolDecision.REJECTED,
+            )
         )

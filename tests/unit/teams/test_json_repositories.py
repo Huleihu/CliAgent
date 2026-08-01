@@ -14,6 +14,7 @@ from local_dev_agent.teams import (
     TeamMessageDeliveryStatus,
     TeamMessageDraft,
     TeamMessageType,
+    TeamProtocolDecision,
 )
 from local_dev_agent.teams.errors import TeamMessageIdempotencyConflictError
 
@@ -169,3 +170,25 @@ def test_recover_reserved_releases_only_messages_left_by_an_interrupted_worker(
             recipient_member_id="member-001",
         )
     ) == (first.message_id, second.message_id)
+
+
+def test_inbox_rejects_protocol_persistence_until_versioned_codec_is_added(
+    tmp_path: Path,
+) -> None:
+    inbox = JsonFileTeamInboxRepository(tmp_path)
+
+    with pytest.raises(ValueError, match="尚未支持 S16 协议消息持久化"):
+        inbox.send(
+            TeamMessageDraft.create(
+                message_id="response-001",
+                team_id="team-001",
+                sender_member_id="lead-001",
+                recipient_member_id="member-001",
+                message_type=TeamMessageType.SHUTDOWN_RESPONSE,
+                content="已安全停止。",
+                idempotency_key="protocol:response-001",
+                request_id="request-001",
+                protocol_decision=TeamProtocolDecision.APPROVED,
+                created_at=TIMESTAMP,
+            )
+        )

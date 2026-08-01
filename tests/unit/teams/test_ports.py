@@ -16,6 +16,10 @@ from local_dev_agent.teams import (
     TeamMessage,
     TeamMessageDraft,
     TeamPromptExecution,
+    TeamProtocolState,
+    TeamProtocolStateRepository,
+    TeamProtocolStatus,
+    TeamProtocolType,
     TeamRepository,
     TeamResultReporter,
 )
@@ -174,6 +178,29 @@ class Gate:
         return None
 
 
+class InMemoryProtocolStateRepository:
+    def __init__(self) -> None:
+        self.states: dict[str, TeamProtocolState] = {}
+
+    def add(self, state: TeamProtocolState) -> TeamProtocolState:
+        self.states[state.request_id] = state
+        return state
+
+    def get(self, request_id: str) -> TeamProtocolState | None:
+        return self.states.get(request_id)
+
+    def list_pending_for_team(self, team_id: str) -> tuple[TeamProtocolState, ...]:
+        return tuple(
+            state
+            for state in self.states.values()
+            if state.team_id == team_id and state.status is TeamProtocolStatus.PENDING
+        )
+
+    def replace(self, state: TeamProtocolState) -> TeamProtocolState:
+        self.states[state.request_id] = state
+        return state
+
+
 def test_team_ports_accept_structural_implementations() -> None:
     id_generator: TeamIdGenerator = FixedIdGenerator()
     clock: TeamClock = FixedClock()
@@ -185,6 +212,7 @@ def test_team_ports_accept_structural_implementations() -> None:
     executor: TeamAgentExecutor = FixedAgentExecutor()
     result_reporter: TeamResultReporter = RecordingResultReporter()
     execution_gate: TeamExecutionGate = Gate()
+    protocol_repository: TeamProtocolStateRepository = InMemoryProtocolStateRepository()
 
     member = TeamMember.create(
         member_id="member-001",
@@ -223,3 +251,15 @@ def test_team_ports_accept_structural_implementations() -> None:
     assert result_reporter.report(member=member, source_messages=(), execution=executor.execute(member=member, prompt="继续处理。")) == ()
     assert execution_gate.try_acquire() is True
     assert execution_gate.release() is None
+    protocol_state = TeamProtocolState.create(
+        request_id="request-001",
+        team_id=team.team_id,
+        protocol_type=TeamProtocolType.SHUTDOWN,
+        sender_member_id=team.lead_member_id,
+        target_member_id="member-002",
+        payload="请安全停止当前 Runner。",
+        created_at=clock.now(),
+    )
+    assert protocol_repository.add(protocol_state) is protocol_state
+    assert protocol_repository.get(protocol_state.request_id) is protocol_state
+    assert protocol_repository.list_pending_for_team(team.team_id) == (protocol_state,)

@@ -1,4 +1,4 @@
-"""S15 Team、成员、工作分配和收件箱消息的不可变领域契约。"""
+"""S15 Team 协作与 S16 结构化协议的不可变领域契约。"""
 
 from __future__ import annotations
 
@@ -13,6 +13,12 @@ from local_dev_agent.domain.state.timestamps import normalize_utc_timestamp
 from .errors import (
     InvalidTeamAssignmentTransitionError,
     InvalidTeamMessageTransitionError,
+)
+from .protocol_types import (
+    TeamMessageType,
+    TeamProtocolDecision,
+    is_protocol_request_message_type,
+    is_protocol_response_message_type,
 )
 
 
@@ -48,20 +54,38 @@ class TeamAssignmentStatus(StrEnum):
     FAILED = "failed"
 
 
-class TeamMessageType(StrEnum):
-    """首版支持的 Team 消息类别。"""
-
-    PLAIN = "plain"
-    ASSIGNMENT = "assignment"
-    RESULT = "result"
-
-
 class TeamMessageDeliveryStatus(StrEnum):
     """消息从未读到确认消费的持久投递状态。"""
 
     UNREAD = "unread"
     RESERVED = "reserved"
     CONSUMED = "consumed"
+
+
+def _normalize_protocol_message_fields(
+    *,
+    message_type: TeamMessageType,
+    request_id: str | None,
+    protocol_decision: TeamProtocolDecision | None,
+) -> tuple[str | None, TeamProtocolDecision | None]:
+    """让协议关联字段只出现在合法的 request 或 response 消息上。"""
+
+    is_request = is_protocol_request_message_type(message_type)
+    is_response = is_protocol_response_message_type(message_type)
+    if not is_request and not is_response:
+        if request_id is not None or protocol_decision is not None:
+            raise ValueError("普通 Team 消息不能包含协议 request_id 或决议。")
+        return None, None
+    if request_id is None:
+        raise ValueError("协议消息必须包含非空 request_id。")
+    normalized_request_id = _require_nonempty_text("request_id", request_id)
+    if is_request:
+        if protocol_decision is not None:
+            raise ValueError("协议请求消息不能提前包含响应决议。")
+        return normalized_request_id, None
+    if not isinstance(protocol_decision, TeamProtocolDecision):
+        raise ValueError("协议响应消息必须包含 TeamProtocolDecision。")
+    return normalized_request_id, protocol_decision
 
 
 @dataclass(frozen=True, slots=True)
@@ -76,6 +100,8 @@ class TeamMessageDraft:
     content: str
     idempotency_key: str
     created_at: datetime
+    request_id: str | None = None
+    protocol_decision: TeamProtocolDecision | None = None
 
     def __post_init__(self) -> None:
         """将发送方和接收方事实固定下来，把顺序分配留给加锁的收件箱。"""
@@ -97,6 +123,13 @@ class TeamMessageDraft:
             raise ValueError("消息发送方和接收方不能是同一成员。")
         if not isinstance(self.message_type, TeamMessageType):
             raise ValueError("字段“message_type”必须是 TeamMessageType。")
+        request_id, decision = _normalize_protocol_message_fields(
+            message_type=self.message_type,
+            request_id=self.request_id,
+            protocol_decision=self.protocol_decision,
+        )
+        object.__setattr__(self, "request_id", request_id)
+        object.__setattr__(self, "protocol_decision", decision)
         object.__setattr__(
             self,
             "created_at",
@@ -115,6 +148,8 @@ class TeamMessageDraft:
         idempotency_key: str,
         message_id: str | None = None,
         created_at: datetime | None = None,
+        request_id: str | None = None,
+        protocol_decision: TeamProtocolDecision | None = None,
     ) -> "TeamMessageDraft":
         """创建未分配 sequence 的投递草稿。"""
 
@@ -127,6 +162,8 @@ class TeamMessageDraft:
             content=content,
             idempotency_key=idempotency_key,
             created_at=created_at or datetime.now(timezone.utc),
+            request_id=request_id,
+            protocol_decision=protocol_decision,
         )
 
 
@@ -441,6 +478,8 @@ class TeamMessage:
     consumed_by_session_id: str | None = None
     consumed_by_run_id: str | None = None
     consumed_at: datetime | None = None
+    request_id: str | None = None
+    protocol_decision: TeamProtocolDecision | None = None
 
     def __post_init__(self) -> None:
         """明确消息投递的全部身份和状态，避免收件箱依赖文件顺序猜测事实。"""
@@ -464,6 +503,13 @@ class TeamMessage:
             raise ValueError("字段“sequence”必须是正整数。")
         if not isinstance(self.message_type, TeamMessageType):
             raise ValueError("字段“message_type”必须是 TeamMessageType。")
+        request_id, decision = _normalize_protocol_message_fields(
+            message_type=self.message_type,
+            request_id=self.request_id,
+            protocol_decision=self.protocol_decision,
+        )
+        object.__setattr__(self, "request_id", request_id)
+        object.__setattr__(self, "protocol_decision", decision)
         if not isinstance(self.delivery_status, TeamMessageDeliveryStatus):
             raise ValueError("字段“delivery_status”必须是 TeamMessageDeliveryStatus。")
         object.__setattr__(
@@ -498,6 +544,8 @@ class TeamMessage:
         idempotency_key: str,
         message_id: str | None = None,
         created_at: datetime | None = None,
+        request_id: str | None = None,
+        protocol_decision: TeamProtocolDecision | None = None,
     ) -> "TeamMessage":
         """创建已分配顺序的未读消息，仅供收件箱仓储内部使用。"""
 
@@ -512,6 +560,8 @@ class TeamMessage:
             idempotency_key=idempotency_key,
             created_at=created_at or datetime.now(timezone.utc),
             delivery_status=TeamMessageDeliveryStatus.UNREAD,
+            request_id=request_id,
+            protocol_decision=protocol_decision,
         )
 
     def reserve(self, *, reservation_id: str, occurred_at: datetime) -> "TeamMessage":

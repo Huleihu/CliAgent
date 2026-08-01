@@ -5,7 +5,8 @@ from __future__ import annotations
 from collections.abc import Sequence
 
 from .ports import TeamClock, TeamDispatcher, TeamInboxRepository, TeamResultReporter
-from .schema import TeamMember, TeamMessage, TeamMessageDraft, TeamMessageType, TeamPromptExecution
+from .protocol_types import TeamMessageType
+from .schema import TeamMember, TeamMessage, TeamMessageDraft, TeamPromptExecution
 
 
 class InboxTeamResultReporter(TeamResultReporter):

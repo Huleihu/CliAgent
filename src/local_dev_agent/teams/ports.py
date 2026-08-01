@@ -5,6 +5,7 @@ from datetime import datetime
 from threading import Event, Thread
 from typing import Protocol
 
+from .protocol_state import TeamProtocolState
 from .schema import (
     InboxReservation,
     Team,
@@ -118,6 +119,22 @@ class TeamInboxRepository(Protocol):
 
     def recover_reserved(self, *, team_id: str) -> Sequence[TeamMessage]:
         """将进程中断遗留的预留消息恢复为未读。"""
+
+
+class TeamProtocolStateRepository(Protocol):
+    """保存 S16 协议请求状态，不承担消息投递或响应 dispatch。"""
+
+    def add(self, state: TeamProtocolState) -> TeamProtocolState:
+        """新增一项 pending 协议请求。"""
+
+    def get(self, request_id: str) -> TeamProtocolState | None:
+        """按 request_id 读取协议状态。"""
+
+    def list_pending_for_team(self, team_id: str) -> Sequence[TeamProtocolState]:
+        """稳定返回指定 Team 尚未解决的请求。"""
+
+    def replace(self, state: TeamProtocolState) -> TeamProtocolState:
+        """以新的完整协议状态替换既有请求。"""
 
 
 class TeamDispatcher(Protocol):

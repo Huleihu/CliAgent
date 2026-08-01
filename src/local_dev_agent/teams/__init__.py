@@ -19,8 +19,16 @@ from .ports import (
     TeamSignalRegistry,
     TeamThreadFactory,
     TeamWaiter,
+    TeamProtocolStateRepository,
 )
 from .lead_runner import TeamLeadInboxRunner
+from .protocol_state import TeamProtocolState
+from .protocol_types import (
+    TeamMessageType,
+    TeamProtocolDecision,
+    TeamProtocolStatus,
+    TeamProtocolType,
+)
 from .result_reporter import InboxTeamResultReporter
 from .runner import TeamMemberRunner
 from .runtime_adapter import RuntimeTeamAgentExecutor
@@ -34,7 +42,6 @@ from .schema import (
     TeamMessage,
     TeamMessageDraft,
     TeamMessageDeliveryStatus,
-    TeamMessageType,
     TeamPromptExecution,
     TeamStatus,
 )
@@ -71,6 +78,11 @@ __all__ = [
     "TeamMessageDeliveryStatus",
     "TeamMessageType",
     "TeamPromptExecution",
+    "TeamProtocolDecision",
+    "TeamProtocolState",
+    "TeamProtocolStateRepository",
+    "TeamProtocolStatus",
+    "TeamProtocolType",
     "TeamRepository",
     "TeamResultReporter",
     "TeamRecoveryResult",

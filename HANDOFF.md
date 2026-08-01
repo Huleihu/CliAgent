@@ -224,6 +224,7 @@
 - 已完成 S15 结果回传的第 1 个教学式小步：新增 `TeamResultReporter` 端口及 `InboxTeamResultReporter`，成员成功 Run 后只为本批 `ASSIGNMENT` 消息生成 `RESULT`，回传给派活消息的发送者；结果正文携带成员、实际 Run 与来源任务消息标识。`TeamMemberRunner` 先持久化结果、再确认原收件箱预留；结果回传失败会释放原消息，避免静默丢失。CLI 组合根已装配该适配器并复用同一 Dispatcher 唤醒接收者。当前尚未新增 Lead Runner，因此 RESULT 会持久化到 Lead 收件箱但不会自动触发 Lead Run；Assignment/S12/Todo/S13/S14 状态均未改变，`MinimalAgentLoop`、`runtime/loop.py` 与 `runtime/notifications.py` 均未修改。
 - 已完成 S15 结果自动消费的第 2 个教学式小步：新增 `TeamExecutionGate` 端口、共享的收件箱 prompt 格式化函数与 `TeamLeadInboxRunner`。Lead Runner 先非阻塞取得共享执行租约，成功后才预留 Lead 收件箱并经既有 Runtime 创建独立 Run；Run 或确认失败会释放消息，任何路径都会释放租约，Dispatcher 仅负责 Event 唤醒。当前该 Runner 尚未由 CLI 创建或启动，未接入终端输出，也尚未与 Cron/前台输入共用实际锁；`MinimalAgentLoop`、`runtime/loop.py` 与 `runtime/notifications.py` 均未修改。
 - 已完成 S15 结果自动消费的第 3 个教学式小步：`CreateTeamTool` 在 Team 与 Lead 身份持久化成功后回调启动 Lead Runner；CLI 组合根创建唯一 `LockCronExecutionGate` 并注入前台输入、Cron Queue Processor 与 Lead Runner，三者因此串行访问 Lead Session，Member Runner 保持并行。自动 Lead Run 在收件箱确认后以 `[team]` 前缀输出最终响应；展示失败只记录日志，不会重投已确认消息。组合测试已覆盖 `ASSIGNMENT → Member Run → RESULT → Lead Run`，两次模型请求分别归属成员与 Lead Session。`MinimalAgentLoop`、`runtime/loop.py` 与 `runtime/notifications.py` 均未修改。
+- 已完成 `learnClaude/s16_team_protocols` 的第 1 个教学式小步：新增独立 `protocol_types.py`、`protocol_state.py`，定义不可变 `TeamProtocolState`、协议类型/状态/决议枚举和 pending request 仓储端口；协议 request/response 通过消息上的显式 `request_id` 关联，response 决议不从正文推断。纯领域匹配会校验 request ID、消息类型、Team、反向参与方、请求载荷和 pending 状态，完全相同的响应重放保持幂等，冲突重复响应明确拒绝。普通 S15 消息禁止携带协议字段；现有 Team JSON 编码器在第 2 步版本化支持完成前显式拒绝协议消息，避免静默丢失字段。当前尚未实现协议状态 JSON 仓储、dispatch、Runner 或 CLI 接入，S15 `ASSIGNMENT → RESULT → Lead Run` 行为保持不变，`MinimalAgentLoop`、`runtime/loop.py` 与 `runtime/notifications.py` 均未修改。
 
 ## 验证
 
@@ -237,6 +238,7 @@
 - S15 结果回传第 1 步追加 CLI 回归：`python -m pytest tests/unit/teams tests/unit/test_main.py` 通过（45 passed）。
 - S15 结果自动消费第 2 步：`python -m pytest tests/unit/teams` 通过（28 passed）；`python -m ruff check src/local_dev_agent/teams tests/unit/teams` 通过。
 - S15 结果自动消费第 3 步：`python -m pytest tests/unit/teams tests/unit/tools/test_team_tools.py tests/unit/test_main.py` 通过（54 passed）；`python -m ruff check src/local_dev_agent/main.py src/local_dev_agent/teams src/local_dev_agent/tools/builtin/team_tools.py tests/unit/teams tests/unit/test_main.py tests/unit/tools/test_team_tools.py` 通过。
+- S16 第 1 步：`python -m pytest tests/unit/teams` 通过（35 passed）；扩大回归 `python -m pytest tests/unit/teams tests/unit/tools/test_team_tools.py tests/unit/test_main.py` 通过（60 passed）。对应 Team、Team 工具与 CLI 文件的定向 Ruff 检查通过。首次定向测试暴露收件箱 Draft 未透传协议字段和端口测试双方成员重复，修正后全部通过。
 - 已人工核对 `TDD.md` 与 `AGENT_REQUIREMENTS_CHECKLIST.txt` 的 S01–S30 覆盖关系；本次仅修改文档，未运行代码测试。
 - `python -m pytest`：519 passed（覆盖既有 S1-S10 闭环，以及 S11 瞬态错误契约、纯恢复策略、可注入执行器、SDK 重试收敛、父 Runtime 重试/fallback、S8 共存和 CLI 装配）。
 - `python -m ruff check src tests`：发现 1 个既有错误：`tests/unit/memory/test_consolidation.py:9:59` 的单行分号触发 `E702`；已用 `git show HEAD:...` 确认该行在本步前已存在，新增 S10 文件的定向 Ruff 检查通过。
@@ -268,6 +270,7 @@
 
 ## 下一步
 
+- `learnClaude/s16_team_protocols` 下一教学式小步应实现 durable pending requests：为 `TeamProtocolState` 增加版本化 JSON 编解码和独立仓储，并升级 inbox 消息编解码以向后兼容既有 S15 文件；本步仍不接 dispatch、Runner 或 CLI。
 - `learnClaude/s15_agent_teams` 当前范围已完成。后续若扩展，可独立设计成员 Session 自动创建与回收、Lead 收件箱显式消费工具、跨进程文件锁、成员生命周期协议（S16）、结果回报、跨进程调度或更细粒度的 Assignment—消息关联；这些能力不应放宽 S6 子 Agent 白名单，也不应把 Team 业务逻辑堆入 `MinimalAgentLoop`、`runtime/loop.py` 或 `runtime/notifications.py`。
 - `learnClaude/s14_cron_scheduler` 当前范围已完成：后续若扩展，可独立设计跨进程多 Session 协调、durable 文件锁/监视、Trigger 持久化与重试、优先级、时区配置、抖动、任务上限或关机收敛；这些能力不应改变 Scheduler 只入队、Queue Processor 与 Agent 执行解耦、S13 通知端口或 S6 子 Agent 白名单。
 - S13 后台任务当前章节闭环已完成。后续若扩展，可独立设计跨进程持久化、取消/查询工具、并发数量限制、输出 Artifact 或 CLI 退出时的任务收敛；这些能力不应放宽 Session 隔离、权限/Hook 链、S6 子 Agent 白名单或 Runtime 通用通知端口边界。

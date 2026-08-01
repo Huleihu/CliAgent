@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from datetime import datetime
+
+from .protocol_types import TeamMessageType
 from .schema import (
     Team,
     TeamAssignment,
@@ -11,7 +13,6 @@ from .schema import (
     TeamMemberStatus,
     TeamMessage,
     TeamMessageDeliveryStatus,
-    TeamMessageType,
     TeamStatus,
 )
 
@@ -122,6 +123,9 @@ def decode_assignment(payload: dict[str, object]) -> TeamAssignment:
 
 def encode_message(message: TeamMessage) -> dict[str, object]:
     """编码单条消息，供收件箱集合信封复用。"""
+
+    if message.request_id is not None or message.protocol_decision is not None:
+        raise ValueError("当前 Team JSON 版本尚未支持 S16 协议消息持久化。")
 
     return {
         "message_id": message.message_id,

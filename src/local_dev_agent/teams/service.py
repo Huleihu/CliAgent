@@ -14,6 +14,7 @@ from .ports import (
     TeamMemberRepository,
     TeamRepository,
 )
+from .protocol_types import TeamMessageType
 from .schema import (
     Team,
     TeamAssignment,
@@ -22,7 +23,6 @@ from .schema import (
     TeamMemberStatus,
     TeamMessage,
     TeamMessageDraft,
-    TeamMessageType,
     TeamStatus,
 )
 
