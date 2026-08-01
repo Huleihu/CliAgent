@@ -23,6 +23,11 @@ from .ports import (
     TeamProtocolStateRepository,
 )
 from .lead_runner import TeamLeadInboxRunner
+from .protocol_dispatch import (
+    TeamProtocolCoordinator,
+    TeamProtocolDispatchDisposition,
+    TeamProtocolDispatchResult,
+)
 from .protocol_state import TeamProtocolState
 from .protocol_types import (
     TeamMessageType,
@@ -80,7 +85,10 @@ __all__ = [
     "TeamMessageDeliveryStatus",
     "TeamMessageType",
     "TeamPromptExecution",
+    "TeamProtocolCoordinator",
     "TeamProtocolDecision",
+    "TeamProtocolDispatchDisposition",
+    "TeamProtocolDispatchResult",
     "TeamProtocolState",
     "TeamProtocolStateRepository",
     "TeamProtocolStatus",

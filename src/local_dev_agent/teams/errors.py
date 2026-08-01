@@ -157,6 +157,14 @@ class TeamProtocolPayloadMismatchError(TeamProtocolError):
         self.request_id = request_id
 
 
+class TeamProtocolRequestConflictError(TeamProtocolError):
+    """同一 request_id 试图表达不同请求事实时抛出。"""
+
+    def __init__(self, *, request_id: str) -> None:
+        super().__init__(f"Team 协议请求“{request_id}”已对应不同请求内容。")
+        self.request_id = request_id
+
+
 class TeamProtocolAlreadyResolvedError(TeamProtocolError):
     """已决请求收到不同响应时抛出，完全相同的重放仍保持幂等。"""
 

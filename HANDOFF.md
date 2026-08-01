@@ -1,5 +1,7 @@
 # 项目交接
 
+> S16 第 3 步（未提交）：新增 `TeamProtocolCoordinator` 与结构化 dispatch 结果。它依赖协议状态仓储、收件箱和时钟端口，负责可幂等地创建 request、按消息类型分派，并只在匹配 response 抵达时持久化终态。`SHUTDOWN_REQUEST` 自动投递批准 response 后返回 `STOP_MEMBER` 意图，但本步不停止任何 Runner；`PLAN_APPROVAL` request/response 按需要转交 Agent；原有 S15 `PLAIN`、`ASSIGNMENT`、`RESULT` 继续透传。未知请求、类型或参与方不匹配均返回 `FAILED` 且不改状态。验证：已授权 pytest 环境中 `tests/unit/teams/test_protocol_dispatch.py` 4 passed，定向 Ruff 通过。下一步接入 Runner，仍不得修改 `MinimalAgentLoop`、`runtime/loop.py` 或 `runtime/notifications.py`。
+
 ## 当前状态
 
 - 已完成 Phase 1 的第二十个教学式迭代：状态机、JSON 文件状态仓储、最小内部事件协议、Runtime 输入编排、内容块模型协议、有界 Agent Loop、统一 logging、受控工具框架、DeepSeek 真实模型适配、多轮工具调用闭环、最小交互式启动入口、真实只读文件工具、跨 Run 会话历史与统一参数校验。
