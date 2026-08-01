@@ -1,0 +1,194 @@
+from datetime import datetime, timezone
+
+from local_dev_agent.teams import (
+    InboxReservation,
+    Team,
+    TeamAgentExecutor,
+    TeamAssignment,
+    TeamAssignmentRepository,
+    TeamClock,
+    TeamDispatcher,
+    TeamIdGenerator,
+    TeamInboxRepository,
+    TeamMember,
+    TeamMemberRepository,
+    TeamMessage,
+    TeamPromptExecution,
+    TeamRepository,
+)
+
+
+TIMESTAMP = datetime(2026, 8, 1, 8, 0, tzinfo=timezone.utc)
+
+
+class FixedIdGenerator:
+    def new_id(self, *, kind: str) -> str:
+        return f"{kind}-001"
+
+
+class FixedClock:
+    def now(self) -> datetime:
+        return TIMESTAMP
+
+
+class InMemoryTeamRepository:
+    def __init__(self) -> None:
+        self.teams: dict[str, Team] = {}
+
+    def add(self, team: Team) -> Team:
+        self.teams[team.team_id] = team
+        return team
+
+    def get(self, team_id: str) -> Team | None:
+        return self.teams.get(team_id)
+
+    def replace(self, team: Team) -> Team:
+        self.teams[team.team_id] = team
+        return team
+
+
+class InMemoryMemberRepository:
+    def __init__(self) -> None:
+        self.members: dict[str, TeamMember] = {}
+
+    def add(self, member: TeamMember) -> TeamMember:
+        self.members[member.member_id] = member
+        return member
+
+    def get(self, member_id: str) -> TeamMember | None:
+        return self.members.get(member_id)
+
+    def list_for_team(self, team_id: str) -> tuple[TeamMember, ...]:
+        return tuple(member for member in self.members.values() if member.team_id == team_id)
+
+    def replace(self, member: TeamMember) -> TeamMember:
+        self.members[member.member_id] = member
+        return member
+
+
+class InMemoryAssignmentRepository:
+    def __init__(self) -> None:
+        self.assignments: dict[str, TeamAssignment] = {}
+
+    def add(self, assignment: TeamAssignment) -> TeamAssignment:
+        self.assignments[assignment.assignment_id] = assignment
+        return assignment
+
+    def get(self, assignment_id: str) -> TeamAssignment | None:
+        return self.assignments.get(assignment_id)
+
+    def list_for_team(self, team_id: str) -> tuple[TeamAssignment, ...]:
+        return tuple(
+            assignment
+            for assignment in self.assignments.values()
+            if assignment.team_id == team_id
+        )
+
+    def list_for_assignee(self, member_id: str) -> tuple[TeamAssignment, ...]:
+        return tuple(
+            assignment
+            for assignment in self.assignments.values()
+            if assignment.assignee_member_id == member_id
+        )
+
+    def replace(self, assignment: TeamAssignment) -> TeamAssignment:
+        self.assignments[assignment.assignment_id] = assignment
+        return assignment
+
+
+class InMemoryInboxRepository:
+    def send(self, message: TeamMessage) -> TeamMessage:
+        return message
+
+    def list_unread(self, *, team_id: str, recipient_member_id: str) -> tuple[TeamMessage, ...]:
+        return ()
+
+    def reserve_unread(
+        self,
+        *,
+        team_id: str,
+        recipient_member_id: str,
+        reservation_id: str,
+        reserved_at: datetime,
+        limit: int,
+    ) -> InboxReservation | None:
+        return None
+
+    def acknowledge(
+        self,
+        reservation: InboxReservation,
+        *,
+        consumer_session_id: str,
+        consumer_run_id: str,
+        consumed_at: datetime,
+    ) -> tuple[TeamMessage, ...]:
+        return ()
+
+    def release(self, reservation: InboxReservation) -> tuple[TeamMessage, ...]:
+        return ()
+
+    def recover_reserved(self, *, team_id: str) -> tuple[TeamMessage, ...]:
+        return ()
+
+
+class RecordingDispatcher:
+    def __init__(self) -> None:
+        self.member_ids: list[str] = []
+
+    def signal(self, *, member_id: str) -> None:
+        self.member_ids.append(member_id)
+
+
+class FixedAgentExecutor:
+    def execute(self, *, member: TeamMember, prompt: str) -> TeamPromptExecution:
+        return TeamPromptExecution(
+            session_id=member.session_id,
+            run_id="run-001",
+            response_text=prompt,
+        )
+
+
+def test_team_ports_accept_structural_implementations() -> None:
+    id_generator: TeamIdGenerator = FixedIdGenerator()
+    clock: TeamClock = FixedClock()
+    team_repository: TeamRepository = InMemoryTeamRepository()
+    member_repository: TeamMemberRepository = InMemoryMemberRepository()
+    assignment_repository: TeamAssignmentRepository = InMemoryAssignmentRepository()
+    inbox_repository: TeamInboxRepository = InMemoryInboxRepository()
+    dispatcher: TeamDispatcher = RecordingDispatcher()
+    executor: TeamAgentExecutor = FixedAgentExecutor()
+
+    member = TeamMember.create(
+        member_id="member-001",
+        team_id="team-001",
+        name="alice",
+        role="开发",
+        session_id="session-001",
+        created_at=clock.now(),
+    )
+    team = Team.create(
+        team_id="team-001",
+        workspace_id="workspace-001",
+        lead_member_id="member-001",
+        created_at=clock.now(),
+    )
+    assignment = TeamAssignment.create(
+        assignment_id="assignment-001",
+        team_id=team.team_id,
+        assigned_by_member_id="member-001",
+        assignee_member_id=member.member_id,
+        prompt="检查测试。",
+        created_at=clock.now(),
+    )
+
+    assert id_generator.new_id(kind="message") == "message-001"
+    assert team_repository.add(team) is team
+    assert member_repository.add(member) is member
+    assert assignment_repository.add(assignment) is assignment
+    assert inbox_repository.list_unread(
+        team_id=team.team_id,
+        recipient_member_id=member.member_id,
+    ) == ()
+    dispatcher.signal(member_id=member.member_id)
+    assert dispatcher.member_ids == ["member-001"]  # type: ignore[attr-defined]
+    assert executor.execute(member=member, prompt="继续处理。").run_id == "run-001"

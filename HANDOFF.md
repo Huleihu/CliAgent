@@ -216,11 +216,13 @@
 - 已完成 `learnClaude/s14_cron_scheduler` 的第 3 个教学式小步：新增 scope 路由的 `CronTaskCatalog`、本地时区系统时钟、带锁 FIFO `InMemoryCronTriggerQueue`、`CronScheduler` 和可替换 Event 等待器/daemon 线程运行器。Scheduler 只读取当前 Session 可见定义、按带时区时钟匹配并写入 `CronTrigger`，绝不调用 Agent 或工具；同一任务同一 UTC 分钟由持久化标记和进程内标记双重防重，即使入队后的仓储更新失败也不会在同一分钟重复入队。一次性任务成功入队后立即在进程内退休并从定义仓储删除。测试使用 Fake Clock、Event 与同步线程工厂，不依赖真实 sleep。当前尚未实现 Queue Processor、工具或 Runtime 接入。
 - 已完成 `learnClaude/s14_cron_scheduler` 的第 4 个教学式小步：新增 `CronQueueProcessor`、锁式执行租约和抽象 `CronTriggerConsumer`。处理器仅在租约可用时读取队首、尝试一次交付并确认出队；消费者失败会记录日志并确认该触发，避免坏消息永久阻塞 FIFO，绝不自行判断 cron 或直接启动 Agent。新增仅供父 Agent 组合根注册的 `schedule_cron`、`list_crons`、`cancel_cron` 工具：它们从既有 `ToolExecutionContext` 取得 Session 并委托 `CronTaskService`，复用标准参数校验、Hook、权限和结构化结果链路。尚未注册到 CLI 或 Runtime，S6 子 Agent 白名单未修改。
 - 已完成 `learnClaude/s14_cron_scheduler` 的第 5 个教学式小步与章节闭环：新增 Session 绑定的 Trigger Consumer、独立 Queue Processor Runner 与 CLI `Cron` 组合能力。CLI 以同一执行租约串行化终端输入和 cron Run；Scheduler 与 Queue Processor 分别运行于 daemon 线程，前者只入队，后者才经 Consumer 调用既有 `execute_prompt()` 创建独立 Run。现有 `PendingUserMessageSource` 已在每个 Run 开始和工具结果后排出 S13 后台任务通知，故 Cron 不需要也不应修改 `runtime/loop.py` 或 `runtime/notifications.py`；S13、S11、S12、Todo、权限、Hook 与 Transcript 均维持既有边界。Cron 工具只在父 CLI 目录注册，S6 子 Agent 固定四项文件工具保持不变。README 已记录 durable 与进程生命周期语义。
+- 已完成 `learnClaude/s15_agent_teams` 的第 1 个教学式小步：新增独立 `local_dev_agent.teams` 领域包，以不可变 `Team`、`TeamMember`、`TeamAssignment`、`TeamMessage` 与 `InboxReservation` 区分工作区 Team、成员身份与 Session 绑定、独立于 S12 的工作分配、有序消息和收件箱预留批次。消息明确保存发送方、接收方、接收方范围内 sequence、幂等键与 `unread → reserved → consumed` 状态；确认消费必须记录实际 Session 和 Run。工作分配可在进程中断后转为 `recovery_pending`，不伪造完成，也不自动修改 S12 任务。新增 Team、成员、分配、收件箱、时钟、标识生成、Dispatcher 和 Agent 执行端口；当前尚未实现 JSON 仓储、线程、工具、Runtime/CLI 接入或系统提示，`MinimalAgentLoop`、`runtime/loop.py` 与 `runtime/notifications.py` 均未修改。
 
 ## 验证
 
 - `anthropic`、`python-dotenv`、`pytest` 可在 Conda 环境中导入。
 - `ruff` 可运行。
+- 本步定向 `python -m pytest tests/unit/teams` 通过（9 passed）；`python -m ruff check src/local_dev_agent/teams tests/unit/teams` 通过。
 - 已人工核对 `TDD.md` 与 `AGENT_REQUIREMENTS_CHECKLIST.txt` 的 S01–S30 覆盖关系；本次仅修改文档，未运行代码测试。
 - `python -m pytest`：519 passed（覆盖既有 S1-S10 闭环，以及 S11 瞬态错误契约、纯恢复策略、可注入执行器、SDK 重试收敛、父 Runtime 重试/fallback、S8 共存和 CLI 装配）。
 - `python -m ruff check src tests`：发现 1 个既有错误：`tests/unit/memory/test_consolidation.py:9:59` 的单行分号触发 `E702`；已用 `git show HEAD:...` 确认该行在本步前已存在，新增 S10 文件的定向 Ruff 检查通过。
@@ -252,6 +254,7 @@
 
 ## 下一步
 
+- `learnClaude/s15_agent_teams` 下一步应只实现版本化 JSON Team、成员、Assignment 与收件箱仓储，以及应用服务；每个接收方收件箱需以进程内锁、同目录临时文件、`fsync` 和原子替换维护 sequence、幂等键与预留—确认消费状态。恢复时只能释放遗留预留消息、将中断分配标记为 `recovery_pending`，不启动线程、不创建 Run、不自动完成工作；继续保持 S12、Todo、S13、S14 和 Runtime 的边界。
 - `learnClaude/s14_cron_scheduler` 当前范围已完成：后续若扩展，可独立设计跨进程多 Session 协调、durable 文件锁/监视、Trigger 持久化与重试、优先级、时区配置、抖动、任务上限或关机收敛；这些能力不应改变 Scheduler 只入队、Queue Processor 与 Agent 执行解耦、S13 通知端口或 S6 子 Agent 白名单。
 - S13 后台任务当前章节闭环已完成。后续若扩展，可独立设计跨进程持久化、取消/查询工具、并发数量限制、输出 Artifact 或 CLI 退出时的任务收敛；这些能力不应放宽 Session 隔离、权限/Hook 链、S6 子 Agent 白名单或 Runtime 通用通知端口边界。
 - 已完成当前范围的 S8 Context Compact 版本化历史摘要检查点性能优化闭环：完整 Conversation Transcript 始终保持追加式原始历史；检查点独立、版本化、可验证且原子写入，后续模型请求优先使用“检查点摘要 + 原始尾部”，并能从完整历史重建以避免摘要漂移。后续若继续优化，可独立评估 Transcript 的增量存储、检查点校验缓存或更细粒度的重建策略。
