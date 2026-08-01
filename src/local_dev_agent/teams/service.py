@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from .errors import TeamEntityNotFoundError
+from .errors import TeamEntityNotFoundError, TeamProtocolNotConfiguredError
 from .ports import (
     TeamAssignmentRepository,
     TeamClock,
@@ -12,9 +12,11 @@ from .ports import (
     TeamIdGenerator,
     TeamInboxRepository,
     TeamMemberRepository,
+    TeamProtocolRequestSender,
     TeamRepository,
 )
-from .protocol_types import TeamMessageType
+from .protocol_state import TeamProtocolState
+from .protocol_types import TeamMessageType, TeamProtocolType
 from .schema import (
     Team,
     TeamAssignment,
@@ -48,6 +50,7 @@ class TeamService:
         id_generator: TeamIdGenerator,
         clock: TeamClock,
         dispatcher: TeamDispatcher,
+        protocol_request_sender: TeamProtocolRequestSender | None = None,
     ) -> None:
         self._team_repository = team_repository
         self._member_repository = member_repository
@@ -56,6 +59,11 @@ class TeamService:
         self._id_generator = id_generator
         self._clock = clock
         self._dispatcher = dispatcher
+        if protocol_request_sender is not None and not callable(
+            getattr(protocol_request_sender, "open_request", None)
+        ):
+            raise TypeError("protocol_request_sender 必须提供 open_request 方法或为 None。")
+        self._protocol_request_sender = protocol_request_sender
 
     def create_team(
         self,
@@ -204,6 +212,48 @@ class TeamService:
         )
         self._dispatcher.signal(member_id=recipient_member_id)
         return message
+
+    def request_shutdown(
+        self,
+        *,
+        team_id: str,
+        lead_member_id: str,
+        lead_session_id: str,
+        target_member_id: str,
+        reason: str,
+        request_id: str,
+    ) -> tuple[TeamProtocolState, TeamMessage]:
+        """由当前 Lead 发起可追踪的关闭握手，成员收到后才会决定停止自身 Runner。"""
+
+        team = self._require_active_team(team_id)
+        if team.lead_member_id != lead_member_id:
+            raise ValueError("只有 Team Lead 可以发起成员关闭请求。")
+        self._require_active_member_for_session(
+            team_id=team_id,
+            member_id=lead_member_id,
+            session_id=lead_session_id,
+        )
+        target_member = self._require_active_member(team_id, target_member_id)
+        if target_member.member_id == lead_member_id:
+            raise ValueError("不能通过成员关闭协议停止 Team Lead。")
+        if self._protocol_request_sender is None:
+            raise TeamProtocolNotConfiguredError()
+        state = TeamProtocolState.create(
+            request_id=request_id,
+            team_id=team_id,
+            protocol_type=TeamProtocolType.SHUTDOWN,
+            sender_member_id=lead_member_id,
+            target_member_id=target_member.member_id,
+            payload=reason,
+            created_at=self._clock.now(),
+        )
+        persisted_state, message = self._protocol_request_sender.open_request(
+            state=state,
+            message_id=f"shutdown-request-{request_id}",
+            idempotency_key=f"shutdown:{request_id}",
+        )
+        self._dispatcher.signal(member_id=target_member.member_id)
+        return persisted_state, message
 
     def recover_team(self, *, team_id: str) -> TeamRecoveryResult:
         """显式释放遗留预留并标记中断分配；不自动新建或执行任何 Run。"""

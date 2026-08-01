@@ -21,6 +21,8 @@ from .ports import (
     TeamThreadFactory,
     TeamWaiter,
     TeamProtocolStateRepository,
+    TeamProtocolRequestSender,
+    TeamShutdownRequester,
     TeamProtocolMessageDispatcher,
 )
 from .lead_runner import TeamLeadInboxRunner
@@ -96,6 +98,7 @@ __all__ = [
     "TeamProtocolMessageDispatcher",
     "TeamProtocolState",
     "TeamProtocolStateRepository",
+    "TeamProtocolRequestSender",
     "TeamProtocolStatus",
     "TeamProtocolType",
     "TeamRepository",
@@ -105,6 +108,7 @@ __all__ = [
     "TeamMemberRunner",
     "TeamSignalRegistry",
     "TeamService",
+    "TeamShutdownRequester",
     "TeamStatus",
     "TeamThreadFactory",
     "TeamWaiter",

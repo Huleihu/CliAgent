@@ -140,6 +140,35 @@ class TeamProtocolStateRepository(Protocol):
         """以新的完整协议状态替换既有请求。"""
 
 
+class TeamProtocolRequestSender(Protocol):
+    """持久化协议请求并投递其 request 消息，不负责 Team 成员权限校验或 Runner 唤醒。"""
+
+    def open_request(
+        self,
+        *,
+        state: TeamProtocolState,
+        message_id: str,
+        idempotency_key: str,
+    ) -> tuple[TeamProtocolState, TeamMessage]:
+        """保存或幂等重放一个 pending 请求，并将 request 消息投递到目标收件箱。"""
+
+
+class TeamShutdownRequester(Protocol):
+    """受控发起 shutdown 协议的应用服务入口，供父侧工具而非 Runner 调用。"""
+
+    def request_shutdown(
+        self,
+        *,
+        team_id: str,
+        lead_member_id: str,
+        lead_session_id: str,
+        target_member_id: str,
+        reason: str,
+        request_id: str,
+    ) -> tuple[TeamProtocolState, TeamMessage]:
+        """校验 Lead 身份后创建 shutdown 请求、投递消息并唤醒目标成员。"""
+
+
 class TeamProtocolMessageDispatcher(Protocol):
     """将单条收件箱消息解释为协议路由结论，不负责预留、确认或执行 Agent。"""
 

@@ -49,6 +49,7 @@ from local_dev_agent.system_prompt import (
     create_cli_system_prompt_provider,
 )
 from local_dev_agent.todos import TodoReminderPolicy
+from local_dev_agent.teams import JsonFileTeamProtocolStateRepository, TeamProtocolStatus
 from local_dev_agent.subagents import SubagentPolicy, SubagentToolRegistryFactory
 from local_dev_agent.tools import ToolCallRequest, ToolExecutionContext
 from local_dev_agent.tools.builtin import TaskTool
@@ -488,12 +489,37 @@ def test_cli_team_composition_registers_parent_tools_and_starts_registered_membe
 
     assert capability._member_runners[member["member_id"]].process_once() is True
     assert capability._lead_runners[lead_member_id].process_once() is True
+    assert capability._member_runners[member["member_id"]]._protocol_router is not None
+    assert capability._lead_runners[lead_member_id]._protocol_router is not None
+    shutdown = registry.get("request_team_shutdown").run(
+        {
+            "team_id": team_id,
+            "lead_member_id": lead_member_id,
+            "target_member_id": member["member_id"],
+            "reason": "当前工作已完成，请安全停止。",
+        },
+        context=ToolExecutionContext(
+            session_id=parent_session.session_id,
+            run_id="run-parent",
+            step_id="step-shutdown",
+            call_id="call-shutdown",
+        ),
+    )
+
+    assert capability._member_runners[member["member_id"]].process_once() is True
+    assert capability._lead_runners[lead_member_id].process_once() is True
+    protocol_state = JsonFileTeamProtocolStateRepository(
+        workspace / "var" / "state" / "teams"
+    ).get(shutdown["request"]["request_id"])  # type: ignore[index]
+    assert protocol_state is not None
+    assert protocol_state.status is TeamProtocolStatus.APPROVED
 
     assert {
         "create_team",
         "add_teammate",
         "assign_team_work",
         "send_team_message",
+        "request_team_shutdown",
     }.issubset(definition.name for definition in registry.list_definitions())
     assert len(thread_factory.names) == 2
     assert thread_factory.names[0].startswith("team-lead-member-")

@@ -4,7 +4,15 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 
-from local_dev_agent.teams import Team, TeamAssignment, TeamMember, TeamMessage, TeamService
+from local_dev_agent.teams import (
+    Team,
+    TeamAssignment,
+    TeamMember,
+    TeamMessage,
+    TeamProtocolState,
+    TeamService,
+    TeamShutdownRequester,
+)
 
 from ..errors import ToolExecutionError, ToolValidationError
 from ..ports import Tool
@@ -24,6 +32,14 @@ def _service(value: object) -> TeamService:
 
     if not all(callable(getattr(value, method_name, None)) for method_name in _REQUIRED_SERVICE_METHODS):
         raise TypeError("Team 工具必须提供完整的 TeamService 应用服务。")
+    return value  # type: ignore[return-value]
+
+
+def _shutdown_requester(value: object) -> TeamShutdownRequester:
+    """让关闭工具只依赖受控协议入口，不直接触及收件箱或协议状态仓储。"""
+
+    if not callable(getattr(value, "request_shutdown", None)):
+        raise TypeError("成员关闭工具必须提供 request_shutdown 应用服务。")
     return value  # type: ignore[return-value]
 
 
@@ -93,6 +109,20 @@ def _message_data(message: TeamMessage) -> dict[str, object]:
         "sequence": message.sequence,
         "message_type": message.message_type.value,
         "delivery_status": message.delivery_status.value,
+    }
+
+
+def _protocol_state_data(state: TeamProtocolState) -> dict[str, object]:
+    """将协议请求的必要追踪信息返回给 Lead，避免由正文猜测是否已登记。"""
+
+    return {
+        "request_id": state.request_id,
+        "team_id": state.team_id,
+        "protocol_type": state.protocol_type.value,
+        "sender_member_id": state.sender_member_id,
+        "target_member_id": state.target_member_id,
+        "status": state.status.value,
+        "payload": state.payload,
     }
 
 
@@ -298,3 +328,51 @@ class SendTeamMessageTool(Tool):
             message_id=_operation_id(execution_context, prefix="message"),
         )
         return _message_data(message)
+
+
+class RequestTeamShutdownTool(Tool):
+    """由当前 Lead 发起可持久追踪的成员关闭请求，不直接终止线程。"""
+
+    def __init__(self, service: TeamShutdownRequester) -> None:
+        self._service = _shutdown_requester(service)
+        self._definition = ToolDefinition(
+            name="request_team_shutdown",
+            description="请求指定 Team 成员安全停止；成员确认后才会停止其 Runner。",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "team_id": {"type": "string"},
+                    "lead_member_id": {"type": "string"},
+                    "target_member_id": {"type": "string"},
+                    "reason": {"type": "string"},
+                },
+                "required": [
+                    "team_id",
+                    "lead_member_id",
+                    "target_member_id",
+                    "reason",
+                ],
+            },
+            tags=("state",),
+        )
+
+    @property
+    def definition(self) -> ToolDefinition:
+        return self._definition
+
+    def run(
+        self,
+        arguments: Mapping[str, object],
+        *,
+        context: ToolExecutionContext | None = None,
+    ) -> Mapping[str, object]:
+        execution_context = _context(context)
+        state, message = self._service.request_shutdown(
+            team_id=_text(arguments, "team_id"),
+            lead_member_id=_text(arguments, "lead_member_id"),
+            lead_session_id=execution_context.session_id,
+            target_member_id=_text(arguments, "target_member_id"),
+            reason=_text(arguments, "reason"),
+            request_id=_operation_id(execution_context, prefix="shutdown"),
+        )
+        return {"request": _protocol_state_data(state), "message": _message_data(message)}

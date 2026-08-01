@@ -102,6 +102,13 @@ class TeamProtocolError(TeamDomainError):
     """Team 结构化协议校验和匹配失败的共同基类。"""
 
 
+class TeamProtocolNotConfiguredError(TeamDomainError):
+    """应用服务尚未装配协议请求发起器时抛出。"""
+
+    def __init__(self) -> None:
+        super().__init__("当前 Team 应用服务未配置协议请求发起器。")
+
+
 class UnknownTeamProtocolRequestError(TeamProtocolError):
     """响应引用的协议请求不存在时抛出。"""
 

@@ -18,6 +18,7 @@ from .team_tools import (
     AddTeammateTool,
     AssignTeamWorkTool,
     CreateTeamTool,
+    RequestTeamShutdownTool,
     SendTeamMessageTool,
 )
 from .todo_write import TodoWriteTool
@@ -44,6 +45,7 @@ __all__ = [
     "AddTeammateTool",
     "AssignTeamWorkTool",
     "SendTeamMessageTool",
+    "RequestTeamShutdownTool",
     "TodoWriteTool",
     "WriteFileTool",
 ]

@@ -101,6 +101,7 @@ from local_dev_agent.teams import (
     JsonFileTeamAssignmentRepository,
     JsonFileTeamInboxRepository,
     JsonFileTeamMemberRepository,
+    JsonFileTeamProtocolStateRepository,
     JsonFileTeamRepository,
     RuntimeTeamAgentExecutor,
     SystemTeamClock,
@@ -110,6 +111,7 @@ from local_dev_agent.teams import (
     TeamLeadInboxRunner,
     TeamMemberRunner,
     TeamPromptExecution,
+    TeamProtocolCoordinator,
     TeamService,
     TeamThreadFactory,
     TeamWaiter,
@@ -137,6 +139,7 @@ from local_dev_agent.tools.builtin import (
     AddTeammateTool,
     AssignTeamWorkTool,
     CreateTeamTool,
+    RequestTeamShutdownTool,
     SendTeamMessageTool,
     TodoWriteTool,
     WriteFileTool,
@@ -408,26 +411,33 @@ def register_cli_team_capability(
         raise TypeError("execution_gate 必须提供 try_acquire 和 release 方法。")
     state_root = workspace / "var" / "state" / "teams"
     dispatcher = EventTeamDispatcher()
+    active_clock = clock if clock is not None else SystemTeamClock()
+    inbox_repository = JsonFileTeamInboxRepository(state_root)
+    protocol_dispatcher = TeamProtocolCoordinator(
+        state_repository=JsonFileTeamProtocolStateRepository(state_root),
+        inbox_repository=inbox_repository,
+        clock=active_clock,
+    )
     service = TeamService(
         team_repository=JsonFileTeamRepository(state_root),
         member_repository=JsonFileTeamMemberRepository(state_root),
         assignment_repository=JsonFileTeamAssignmentRepository(state_root),
-        inbox_repository=JsonFileTeamInboxRepository(state_root),
+        inbox_repository=inbox_repository,
         id_generator=UuidTeamIdGenerator(),
-        clock=clock if clock is not None else SystemTeamClock(),
+        clock=active_clock,
         dispatcher=dispatcher,
+        protocol_request_sender=protocol_dispatcher,
     )
     executor = RuntimeTeamAgentExecutor(
         runtime_service=UserInputRuntimeService(repository),
         loop=loop,
     )
-    active_clock = clock if clock is not None else SystemTeamClock()
     active_waiter = waiter if waiter is not None else EventTeamWaiter()
     active_thread_factory = (
         thread_factory if thread_factory is not None else DaemonTeamThreadFactory()
     )
     result_reporter = InboxTeamResultReporter(
-        inbox_repository=JsonFileTeamInboxRepository(state_root),
+        inbox_repository=inbox_repository,
         clock=active_clock,
         dispatcher=dispatcher,
     )
@@ -435,7 +445,7 @@ def register_cli_team_capability(
     def create_runner(member: TeamMember) -> TeamMemberRunner:
         return TeamMemberRunner(
             member=member,
-            inbox_repository=JsonFileTeamInboxRepository(state_root),
+            inbox_repository=inbox_repository,
             agent_executor=executor,
             result_reporter=result_reporter,
             id_generator=UuidTeamIdGenerator(),
@@ -443,6 +453,7 @@ def register_cli_team_capability(
             signal_registry=dispatcher,
             waiter=active_waiter,
             thread_factory=active_thread_factory,
+            protocol_dispatcher=protocol_dispatcher,
         )
 
     def print_lead_response(execution: TeamPromptExecution) -> None:
@@ -453,7 +464,7 @@ def register_cli_team_capability(
     def create_lead_runner(lead: TeamMember) -> TeamLeadInboxRunner:
         return TeamLeadInboxRunner(
             member=lead,
-            inbox_repository=JsonFileTeamInboxRepository(state_root),
+            inbox_repository=inbox_repository,
             agent_executor=executor,
             execution_gate=execution_gate,
             id_generator=UuidTeamIdGenerator(),
@@ -462,6 +473,7 @@ def register_cli_team_capability(
             waiter=active_waiter,
             thread_factory=active_thread_factory,
             on_execution_completed=print_lead_response,
+            protocol_dispatcher=protocol_dispatcher,
         )
 
     capability = CliTeamCapability(create_runner, create_lead_runner, {}, {})
@@ -469,6 +481,7 @@ def register_cli_team_capability(
     registry.register(AddTeammateTool(service, on_teammate_added=capability.start_member))
     registry.register(AssignTeamWorkTool(service))
     registry.register(SendTeamMessageTool(service))
+    registry.register(RequestTeamShutdownTool(service))
     return capability
 
 

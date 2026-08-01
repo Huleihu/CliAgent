@@ -8,6 +8,8 @@ from local_dev_agent.teams import (
     TeamMember,
     TeamMessage,
     TeamMessageType,
+    TeamProtocolState,
+    TeamProtocolType,
 )
 from local_dev_agent.tools import (
     ToolCallRequest,
@@ -19,6 +21,7 @@ from local_dev_agent.tools.builtin import (
     AddTeammateTool,
     AssignTeamWorkTool,
     CreateTeamTool,
+    RequestTeamShutdownTool,
     SendTeamMessageTool,
 )
 from local_dev_agent.tools.errors import ToolExecutionError, ToolValidationError
@@ -90,6 +93,34 @@ class RecordingTeamService:
             created_at=TIMESTAMP,
         )
 
+    def request_shutdown(self, **kwargs: object) -> tuple[TeamProtocolState, TeamMessage]:
+        self.calls.append(("request_shutdown", kwargs))
+        request_id = str(kwargs["request_id"])
+        state = TeamProtocolState.create(
+            request_id=request_id,
+            team_id=str(kwargs["team_id"]),
+            protocol_type=TeamProtocolType.SHUTDOWN,
+            sender_member_id=str(kwargs["lead_member_id"]),
+            target_member_id=str(kwargs["target_member_id"]),
+            payload=str(kwargs["reason"]),
+            created_at=TIMESTAMP,
+        )
+        return (
+            state,
+            TeamMessage.create(
+                message_id=f"shutdown-request-{request_id}",
+                team_id=state.team_id,
+                sender_member_id=state.sender_member_id,
+                recipient_member_id=state.target_member_id,
+                sequence=1,
+                message_type=TeamMessageType.SHUTDOWN_REQUEST,
+                content=state.payload,
+                idempotency_key=f"shutdown:{request_id}",
+                request_id=request_id,
+                created_at=TIMESTAMP,
+            ),
+        )
+
 
 def _context() -> ToolExecutionContext:
     return ToolExecutionContext(
@@ -110,12 +141,14 @@ def test_team_tools_use_stable_parent_visible_names() -> None:
             AddTeammateTool(service),
             AssignTeamWorkTool(service),
             SendTeamMessageTool(service),
+            RequestTeamShutdownTool(service),
         )
     ) == (
         "create_team",
         "add_teammate",
         "assign_team_work",
         "send_team_message",
+        "request_team_shutdown",
     )
 
 
@@ -125,6 +158,7 @@ def test_team_tools_bind_member_actions_to_execution_context_and_stable_call_ide
     add = AddTeammateTool(service)
     assign = AssignTeamWorkTool(service)
     send = SendTeamMessageTool(service)
+    request_shutdown = RequestTeamShutdownTool(service)
     context = _context()
 
     created = create.run(
@@ -164,14 +198,26 @@ def test_team_tools_bind_member_actions_to_execution_context_and_stable_call_ide
         },
         context=context,
     )
+    shutdown = request_shutdown.run(
+        {
+            "team_id": "team-001",
+            "lead_member_id": "lead-001",
+            "target_member_id": "member-001",
+            "reason": "当前工作已完成，请安全停止。",
+        },
+        context=context,
+    )
 
     assert created["lead"]["session_id"] == "session-lead"  # type: ignore[index]
     assert member["session_id"] == "session-alice"
     assert assignment["assignment_id"] == "assignment-call-001"
     assert message["message_id"] == "message-call-001"
+    assert shutdown["request"]["request_id"] == "shutdown-call-001"  # type: ignore[index]
+    assert shutdown["message"]["message_type"] == "shutdown_request"  # type: ignore[index]
     assert service.calls[1][1]["lead_session_id"] == "session-lead"
     assert service.calls[2][1]["assigned_by_session_id"] == "session-lead"
     assert service.calls[3][1]["idempotency_key"] == "team-message-call-001"
+    assert service.calls[4][1]["lead_session_id"] == "session-lead"
 
 
 def test_team_tools_use_standard_executor_validation_and_require_context() -> None:
@@ -232,3 +278,5 @@ def test_team_tools_validate_direct_arguments_and_require_service_port() -> None
         )
     with pytest.raises(TypeError, match="完整的 TeamService"):
         CreateTeamTool(object())  # type: ignore[arg-type]
+    with pytest.raises(TypeError, match="request_shutdown"):
+        RequestTeamShutdownTool(object())  # type: ignore[arg-type]
