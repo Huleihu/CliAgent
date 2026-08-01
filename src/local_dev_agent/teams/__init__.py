@@ -10,6 +10,7 @@ from .ports import (
     TeamAssignmentRepository,
     TeamClock,
     TeamDispatcher,
+    TeamExecutionGate,
     TeamIdGenerator,
     TeamInboxRepository,
     TeamMemberRepository,
@@ -19,6 +20,7 @@ from .ports import (
     TeamThreadFactory,
     TeamWaiter,
 )
+from .lead_runner import TeamLeadInboxRunner
 from .result_reporter import InboxTeamResultReporter
 from .runner import TeamMemberRunner
 from .runtime_adapter import RuntimeTeamAgentExecutor
@@ -57,9 +59,11 @@ __all__ = [
     "TeamAssignmentStatus",
     "TeamClock",
     "TeamDispatcher",
+    "TeamExecutionGate",
     "TeamIdGenerator",
     "TeamInboxRepository",
     "TeamMember",
+    "TeamLeadInboxRunner",
     "TeamMemberRepository",
     "TeamMemberStatus",
     "TeamMessage",

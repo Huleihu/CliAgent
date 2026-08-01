@@ -8,6 +8,7 @@ from local_dev_agent.teams import (
     TeamAssignmentRepository,
     TeamClock,
     TeamDispatcher,
+    TeamExecutionGate,
     TeamIdGenerator,
     TeamInboxRepository,
     TeamMember,
@@ -165,6 +166,14 @@ class RecordingResultReporter:
         return ()
 
 
+class Gate:
+    def try_acquire(self) -> bool:
+        return True
+
+    def release(self) -> None:
+        return None
+
+
 def test_team_ports_accept_structural_implementations() -> None:
     id_generator: TeamIdGenerator = FixedIdGenerator()
     clock: TeamClock = FixedClock()
@@ -175,6 +184,7 @@ def test_team_ports_accept_structural_implementations() -> None:
     dispatcher: TeamDispatcher = RecordingDispatcher()
     executor: TeamAgentExecutor = FixedAgentExecutor()
     result_reporter: TeamResultReporter = RecordingResultReporter()
+    execution_gate: TeamExecutionGate = Gate()
 
     member = TeamMember.create(
         member_id="member-001",
@@ -211,3 +221,5 @@ def test_team_ports_accept_structural_implementations() -> None:
     assert dispatcher.member_ids == ["member-001"]  # type: ignore[attr-defined]
     assert executor.execute(member=member, prompt="继续处理。").run_id == "run-001"
     assert result_reporter.report(member=member, source_messages=(), execution=executor.execute(member=member, prompt="继续处理。")) == ()
+    assert execution_gate.try_acquire() is True
+    assert execution_gate.release() is None

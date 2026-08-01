@@ -180,3 +180,13 @@ class TeamResultReporter(Protocol):
         execution: TeamPromptExecution,
     ) -> Sequence[TeamMessage]:
         """持久化本次执行对应的结果消息，并返回已投递的消息。"""
+
+
+class TeamExecutionGate(Protocol):
+    """串行化同一 Lead Session 自动 Run 的非阻塞执行租约。"""
+
+    def try_acquire(self) -> bool:
+        """执行租约可用时获取它；忙碌时不阻塞。"""
+
+    def release(self) -> None:
+        """释放此前成功取得的执行租约。"""
