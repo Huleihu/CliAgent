@@ -17,6 +17,7 @@ from local_dev_agent.teams import (
     TeamProtocolDecision,
 )
 from local_dev_agent.teams.errors import TeamMessageIdempotencyConflictError
+from local_dev_agent.teams.json_support import write_json_atomically
 
 
 TIMESTAMP = datetime(2026, 8, 1, 8, 0, tzinfo=timezone.utc)
@@ -172,23 +173,71 @@ def test_recover_reserved_releases_only_messages_left_by_an_interrupted_worker(
     ) == (first.message_id, second.message_id)
 
 
-def test_inbox_rejects_protocol_persistence_until_versioned_codec_is_added(
+def test_inbox_persists_protocol_fields_and_recovers_them_across_instances(
     tmp_path: Path,
 ) -> None:
     inbox = JsonFileTeamInboxRepository(tmp_path)
 
-    with pytest.raises(ValueError, match="尚未支持 S16 协议消息持久化"):
-        inbox.send(
-            TeamMessageDraft.create(
-                message_id="response-001",
-                team_id="team-001",
-                sender_member_id="lead-001",
-                recipient_member_id="member-001",
-                message_type=TeamMessageType.SHUTDOWN_RESPONSE,
-                content="已安全停止。",
-                idempotency_key="protocol:response-001",
-                request_id="request-001",
-                protocol_decision=TeamProtocolDecision.APPROVED,
-                created_at=TIMESTAMP,
-            )
+    sent = inbox.send(
+        TeamMessageDraft.create(
+            message_id="response-001",
+            team_id="team-001",
+            sender_member_id="lead-001",
+            recipient_member_id="member-001",
+            message_type=TeamMessageType.SHUTDOWN_RESPONSE,
+            content="已安全停止。",
+            idempotency_key="protocol:response-001",
+            request_id="request-001",
+            protocol_decision=TeamProtocolDecision.APPROVED,
+            created_at=TIMESTAMP,
         )
+    )
+
+    restored = JsonFileTeamInboxRepository(tmp_path).list_unread(
+        team_id="team-001",
+        recipient_member_id="member-001",
+    )
+
+    assert restored == (sent,)
+    assert restored[0].request_id == "request-001"
+    assert restored[0].protocol_decision is TeamProtocolDecision.APPROVED
+
+
+def test_inbox_decodes_legacy_s15_message_without_protocol_fields(tmp_path: Path) -> None:
+    write_json_atomically(
+        tmp_path / "team-001" / "inboxes" / "member-001.json",
+        {
+            "entity_type": "team_inbox",
+            "schema_version": 1,
+            "data": {
+                "next_sequence": 2,
+                "messages": [
+                    {
+                        "message_id": "message-001",
+                        "team_id": "team-001",
+                        "sender_member_id": "lead-001",
+                        "recipient_member_id": "member-001",
+                        "sequence": 1,
+                        "message_type": "assignment",
+                        "content": "检查数据库迁移。",
+                        "idempotency_key": "assignment-001",
+                        "created_at": TIMESTAMP.isoformat(),
+                        "delivery_status": "unread",
+                        "reservation_id": None,
+                        "reserved_at": None,
+                        "consumed_by_session_id": None,
+                        "consumed_by_run_id": None,
+                        "consumed_at": None,
+                    }
+                ],
+            },
+        },
+    )
+
+    restored = JsonFileTeamInboxRepository(tmp_path).list_unread(
+        team_id="team-001",
+        recipient_member_id="member-001",
+    )
+
+    assert restored[0].request_id is None
+    assert restored[0].protocol_decision is None

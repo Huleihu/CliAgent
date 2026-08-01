@@ -65,6 +65,14 @@ class TeamAssignmentAlreadyExistsError(TeamDomainError):
         self.assignment_id = assignment_id
 
 
+class TeamProtocolStateAlreadyExistsError(TeamDomainError):
+    """同一协议请求标识已被持久化时抛出。"""
+
+    def __init__(self, *, request_id: str) -> None:
+        super().__init__(f"Team 协议请求“{request_id}”已存在。")
+        self.request_id = request_id
+
+
 class TeamEntityNotFoundError(TeamDomainError):
     """要求替换的 Team 实体不存在时抛出。"""
 

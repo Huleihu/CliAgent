@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from datetime import datetime
 
+from .protocol_state import TeamProtocolState
 from .protocol_types import TeamMessageType
+from .protocol_types import TeamProtocolDecision, TeamProtocolStatus, TeamProtocolType
 from .schema import (
     Team,
     TeamAssignment,
@@ -121,11 +123,50 @@ def decode_assignment(payload: dict[str, object]) -> TeamAssignment:
     )
 
 
+def encode_protocol_state(state: TeamProtocolState) -> dict[str, object]:
+    """将协议请求状态写成版本化 JSON 信封。"""
+
+    return _envelope(
+        "team_protocol_state",
+        {
+            "request_id": state.request_id,
+            "team_id": state.team_id,
+            "protocol_type": state.protocol_type.value,
+            "sender_member_id": state.sender_member_id,
+            "target_member_id": state.target_member_id,
+            "status": state.status.value,
+            "payload": state.payload,
+            "created_at": state.created_at.isoformat(),
+            "decision": state.decision.value if state.decision is not None else None,
+            "response_message_id": state.response_message_id,
+            "response_content": state.response_content,
+            "resolved_at": _optional_timestamp(state.resolved_at),
+        },
+    )
+
+
+def decode_protocol_state(payload: dict[str, object]) -> TeamProtocolState:
+    """恢复协议请求状态及其可选的最终响应关联。"""
+
+    data = _read_envelope(payload, "team_protocol_state")
+    return TeamProtocolState(
+        request_id=_text(data, "request_id"),
+        team_id=_text(data, "team_id"),
+        protocol_type=TeamProtocolType(_text(data, "protocol_type")),
+        sender_member_id=_text(data, "sender_member_id"),
+        target_member_id=_text(data, "target_member_id"),
+        status=TeamProtocolStatus(_text(data, "status")),
+        payload=_text(data, "payload"),
+        created_at=_timestamp(data, "created_at"),
+        decision=_optional_protocol_decision(data, "decision"),
+        response_message_id=_optional_text(data, "response_message_id"),
+        response_content=_optional_text(data, "response_content"),
+        resolved_at=_optional_timestamp_from_data(data, "resolved_at"),
+    )
+
+
 def encode_message(message: TeamMessage) -> dict[str, object]:
     """编码单条消息，供收件箱集合信封复用。"""
-
-    if message.request_id is not None or message.protocol_decision is not None:
-        raise ValueError("当前 Team JSON 版本尚未支持 S16 协议消息持久化。")
 
     return {
         "message_id": message.message_id,
@@ -143,6 +184,12 @@ def encode_message(message: TeamMessage) -> dict[str, object]:
         "consumed_by_session_id": message.consumed_by_session_id,
         "consumed_by_run_id": message.consumed_by_run_id,
         "consumed_at": _optional_timestamp(message.consumed_at),
+        "request_id": message.request_id,
+        "protocol_decision": (
+            message.protocol_decision.value
+            if message.protocol_decision is not None
+            else None
+        ),
     }
 
 
@@ -165,6 +212,8 @@ def decode_message(data: dict[str, object]) -> TeamMessage:
         consumed_by_session_id=_optional_text(data, "consumed_by_session_id"),
         consumed_by_run_id=_optional_text(data, "consumed_by_run_id"),
         consumed_at=_optional_timestamp_from_data(data, "consumed_at"),
+        request_id=_optional_text(data, "request_id"),
+        protocol_decision=_optional_protocol_decision(data, "protocol_decision"),
     )
 
 
@@ -228,6 +277,14 @@ def _integer(data: dict[str, object], field_name: str) -> int:
     if isinstance(value, bool) or not isinstance(value, int):
         raise ValueError(f"字段“{field_name}”必须是整数。")
     return value
+
+
+def _optional_protocol_decision(
+    data: dict[str, object],
+    field_name: str,
+) -> TeamProtocolDecision | None:
+    value = _optional_text(data, field_name)
+    return TeamProtocolDecision(value) if value is not None else None
 
 
 def _timestamp(data: dict[str, object], field_name: str) -> datetime:

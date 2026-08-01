@@ -4,6 +4,7 @@ from .clock import SystemTeamClock
 from .identifiers import UuidTeamIdGenerator
 from .json_assignment_repository import JsonFileTeamAssignmentRepository
 from .json_inbox_repository import JsonFileTeamInboxRepository
+from .json_protocol_state_repository import JsonFileTeamProtocolStateRepository
 from .json_team_repository import JsonFileTeamMemberRepository, JsonFileTeamRepository
 from .ports import (
     TeamAgentExecutor,
@@ -56,6 +57,7 @@ __all__ = [
     "EventTeamWaiter",
     "JsonFileTeamAssignmentRepository",
     "JsonFileTeamInboxRepository",
+    "JsonFileTeamProtocolStateRepository",
     "JsonFileTeamMemberRepository",
     "JsonFileTeamRepository",
     "SystemTeamClock",
