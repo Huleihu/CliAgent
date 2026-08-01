@@ -14,11 +14,18 @@ from .task_complete import TaskCompleteTool
 from .task_create import TaskCreateTool
 from .task_get import TaskGetTool
 from .task_list import TaskListTool
+from .team_tools import (
+    AddTeammateTool,
+    AssignTeamWorkTool,
+    CreateTeamTool,
+    SendTeamMessageTool,
+)
 from .todo_write import TodoWriteTool
 from .write_file import WriteFileTool
 
 __all__ = [
     "CompactContextTool",
+    "CreateTeamTool",
     "CancelCronTool",
     "BashTool",
     "EditFileTool",
@@ -34,6 +41,9 @@ __all__ = [
     "TaskCreateTool",
     "TaskGetTool",
     "TaskListTool",
+    "AddTeammateTool",
+    "AssignTeamWorkTool",
+    "SendTeamMessageTool",
     "TodoWriteTool",
     "WriteFileTool",
 ]

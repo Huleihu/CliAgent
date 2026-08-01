@@ -1,6 +1,8 @@
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+import pytest
+
 from local_dev_agent.teams import (
     JsonFileTeamAssignmentRepository,
     JsonFileTeamInboxRepository,
@@ -66,6 +68,8 @@ def test_service_keeps_assignment_snapshot_separate_from_delivery_and_only_signa
     )
     teammate = service.add_teammate(
         team_id=team.team_id,
+        lead_member_id=lead.member_id,
+        lead_session_id=lead.session_id,
         name="alice",
         role="后端开发",
         session_id="session-alice",
@@ -74,6 +78,7 @@ def test_service_keeps_assignment_snapshot_separate_from_delivery_and_only_signa
     assignment = service.assign_work(
         team_id=team.team_id,
         assigned_by_member_id=lead.member_id,
+        assigned_by_session_id=lead.session_id,
         assignee_member_id=teammate.member_id,
         prompt="检查数据库迁移。",
         project_task_id="project-task-001",
@@ -102,6 +107,8 @@ def test_service_recovery_releases_messages_and_marks_interrupted_assignment_wit
     )
     teammate = service.add_teammate(
         team_id=team.team_id,
+        lead_member_id=lead.member_id,
+        lead_session_id=lead.session_id,
         name="alice",
         role="后端开发",
         session_id="session-alice",
@@ -109,6 +116,7 @@ def test_service_recovery_releases_messages_and_marks_interrupted_assignment_wit
     assignment = service.assign_work(
         team_id=team.team_id,
         assigned_by_member_id=lead.member_id,
+        assigned_by_session_id=lead.session_id,
         assignee_member_id=teammate.member_id,
         prompt="检查数据库迁移。",
     )
@@ -139,3 +147,67 @@ def test_service_recovery_releases_messages_and_marks_interrupted_assignment_wit
         team_id=team.team_id,
         recipient_member_id=teammate.member_id,
     )[0].message_id == reservation.messages[0].message_id
+
+
+def test_service_replays_the_same_stable_assignment_without_duplicate_message(
+    tmp_path: Path,
+) -> None:
+    service, _ = _service(tmp_path)
+    team, lead = service.create_team(
+        workspace_id="workspace-001",
+        lead_name="lead",
+        lead_role="协调者",
+        lead_session_id="session-lead",
+    )
+    teammate = service.add_teammate(
+        team_id=team.team_id,
+        lead_member_id=lead.member_id,
+        lead_session_id=lead.session_id,
+        name="alice",
+        role="后端开发",
+        session_id="session-alice",
+    )
+    arguments = {
+        "team_id": team.team_id,
+        "assigned_by_member_id": lead.member_id,
+        "assigned_by_session_id": lead.session_id,
+        "assignee_member_id": teammate.member_id,
+        "prompt": "检查数据库迁移。",
+        "assignment_id": "assignment-stable-001",
+    }
+
+    first = service.assign_work(**arguments)
+    replayed = service.assign_work(**arguments)
+
+    assert replayed == first
+    assert JsonFileTeamAssignmentRepository(tmp_path).list_for_team(team.team_id) == (
+        first,
+    )
+    assert len(
+        JsonFileTeamInboxRepository(tmp_path).list_unread(
+            team_id=team.team_id,
+            recipient_member_id=teammate.member_id,
+        )
+    ) == 1
+
+
+def test_service_rejects_mutation_from_a_session_other_than_team_lead(
+    tmp_path: Path,
+) -> None:
+    service, _ = _service(tmp_path)
+    team, lead = service.create_team(
+        workspace_id="workspace-001",
+        lead_name="lead",
+        lead_role="协调者",
+        lead_session_id="session-lead",
+    )
+
+    with pytest.raises(ValueError, match="不属于当前 Session"):
+        service.add_teammate(
+            team_id=team.team_id,
+            lead_member_id=lead.member_id,
+            lead_session_id="session-other",
+            name="alice",
+            role="后端开发",
+            session_id="session-alice",
+        )

@@ -259,5 +259,4 @@ def _same_delivery(message: TeamMessage, draft: TeamMessageDraft) -> bool:
         and message.recipient_member_id == draft.recipient_member_id
         and message.message_type is draft.message_type
         and message.content == draft.content
-        and message.created_at == draft.created_at
     )

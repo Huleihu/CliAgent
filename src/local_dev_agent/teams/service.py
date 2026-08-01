@@ -90,13 +90,22 @@ class TeamService:
         self,
         *,
         team_id: str,
+        lead_member_id: str,
+        lead_session_id: str,
         name: str,
         role: str,
         session_id: str,
     ) -> TeamMember:
         """将持久成员身份加入活动 Team，不启动成员的 Agent Run。"""
 
-        self._require_active_team(team_id)
+        team = self._require_active_team(team_id)
+        if team.lead_member_id != lead_member_id:
+            raise ValueError("只有 Team Lead 可以添加成员。")
+        self._require_active_member_for_session(
+            team_id=team_id,
+            member_id=lead_member_id,
+            session_id=lead_session_id,
+        )
         member = TeamMember.create(
             member_id=self._id_generator.new_id(kind="member"),
             team_id=team_id,
@@ -112,18 +121,41 @@ class TeamService:
         *,
         team_id: str,
         assigned_by_member_id: str,
+        assigned_by_session_id: str,
         assignee_member_id: str,
         prompt: str,
         project_task_id: str | None = None,
+        assignment_id: str | None = None,
     ) -> TeamAssignment:
         """保存独立工作分配，再投递可唤醒成员的 assignment 消息。"""
 
-        self._require_active_member(team_id, assigned_by_member_id)
+        team = self._require_active_team(team_id)
+        if team.lead_member_id != assigned_by_member_id:
+            raise ValueError("只有 Team Lead 可以分配工作。")
+        self._require_active_member_for_session(
+            team_id=team_id,
+            member_id=assigned_by_member_id,
+            session_id=assigned_by_session_id,
+        )
         self._require_active_member(team_id, assignee_member_id)
         if assigned_by_member_id == assignee_member_id:
             raise ValueError("工作分配方和接收方不能是同一成员。")
+        stable_assignment_id = assignment_id or self._id_generator.new_id(kind="assignment")
+        existing = self._assignment_repository.get(stable_assignment_id)
+        if existing is not None:
+            self._require_same_assignment_request(
+                existing,
+                team_id=team_id,
+                assigned_by_member_id=assigned_by_member_id,
+                assignee_member_id=assignee_member_id,
+                prompt=prompt,
+                project_task_id=project_task_id,
+            )
+            self._send_assignment_message(existing)
+            self._dispatcher.signal(member_id=assignee_member_id)
+            return existing
         assignment = TeamAssignment.create(
-            assignment_id=self._id_generator.new_id(kind="assignment"),
+            assignment_id=stable_assignment_id,
             team_id=team_id,
             assigned_by_member_id=assigned_by_member_id,
             assignee_member_id=assignee_member_id,
@@ -141,20 +173,26 @@ class TeamService:
         *,
         team_id: str,
         sender_member_id: str,
+        sender_session_id: str,
         recipient_member_id: str,
         content: str,
         idempotency_key: str,
         message_type: TeamMessageType = TeamMessageType.PLAIN,
+        message_id: str | None = None,
     ) -> TeamMessage:
         """投递一条成员间消息，并仅用 Dispatcher 唤醒进程内 Runner。"""
 
-        self._require_active_member(team_id, sender_member_id)
+        self._require_active_member_for_session(
+            team_id=team_id,
+            member_id=sender_member_id,
+            session_id=sender_session_id,
+        )
         self._require_active_member(team_id, recipient_member_id)
         if sender_member_id == recipient_member_id:
             raise ValueError("消息发送方和接收方不能是同一成员。")
         message = self._inbox_repository.send(
             TeamMessageDraft.create(
-                message_id=self._id_generator.new_id(kind="message"),
+                message_id=message_id or self._id_generator.new_id(kind="message"),
                 team_id=team_id,
                 sender_member_id=sender_member_id,
                 recipient_member_id=recipient_member_id,
@@ -192,7 +230,7 @@ class TeamService:
 
         return self._inbox_repository.send(
             TeamMessageDraft.create(
-                message_id=self._id_generator.new_id(kind="message"),
+                message_id=f"assignment-message-{assignment.assignment_id}",
                 team_id=assignment.team_id,
                 sender_member_id=assignment.assigned_by_member_id,
                 recipient_member_id=assignment.assignee_member_id,
@@ -220,4 +258,39 @@ class TeamService:
             raise ValueError(f"成员“{member_id}”不属于 Team“{team_id}”。")
         if member.status is not TeamMemberStatus.ACTIVE:
             raise ValueError(f"成员“{member_id}”不是活动状态。")
+        return member
+
+    @staticmethod
+    def _require_same_assignment_request(
+        assignment: TeamAssignment,
+        *,
+        team_id: str,
+        assigned_by_member_id: str,
+        assignee_member_id: str,
+        prompt: str,
+        project_task_id: str | None,
+    ) -> None:
+        """只允许同一稳定 Assignment 标识重放同一个派活事实。"""
+
+        if (
+            assignment.team_id != team_id
+            or assignment.assigned_by_member_id != assigned_by_member_id
+            or assignment.assignee_member_id != assignee_member_id
+            or assignment.prompt != prompt
+            or assignment.project_task_id != project_task_id
+        ):
+            raise ValueError("同一工作分配标识不能表达不同的派活请求。")
+
+    def _require_active_member_for_session(
+        self,
+        *,
+        team_id: str,
+        member_id: str,
+        session_id: str,
+    ) -> TeamMember:
+        """把可变的当前工具上下文显式校验为该成员持久绑定的 Session。"""
+
+        member = self._require_active_member(team_id, member_id)
+        if member.session_id != session_id:
+            raise ValueError(f"成员“{member_id}”不属于当前 Session。")
         return member
