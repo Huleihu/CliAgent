@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -104,7 +105,11 @@ from local_dev_agent.teams import (
     RuntimeTeamAgentExecutor,
     SystemTeamClock,
     TeamMember,
+    Team,
+    TeamExecutionGate,
+    TeamLeadInboxRunner,
     TeamMemberRunner,
+    TeamPromptExecution,
     TeamService,
     TeamThreadFactory,
     TeamWaiter,
@@ -173,22 +178,33 @@ class CliCronCapability:
 class CliTeamCapability:
     """CLI 持有的 Team Runner 集合；成员资格仍由 Team JSON 快照决定。"""
 
-    _create_runner: object
-    _runners: dict[str, TeamMemberRunner]
+    _create_member_runner: Callable[[TeamMember], TeamMemberRunner]
+    _create_lead_runner: Callable[[TeamMember], TeamLeadInboxRunner]
+    _member_runners: dict[str, TeamMemberRunner]
+    _lead_runners: dict[str, TeamLeadInboxRunner]
 
     def start_member(self, member: TeamMember) -> None:
         """在成员持久登记完成后启动其唯一进程内 Runner。"""
 
-        if member.member_id in self._runners:
+        if member.member_id in self._member_runners:
             raise RuntimeError(f"Team 成员“{member.member_id}”的 Runner 已启动。")
-        runner = self._create_runner(member)  # type: ignore[operator]
+        runner = self._create_member_runner(member)
         runner.start()
-        self._runners[member.member_id] = runner
+        self._member_runners[member.member_id] = runner
+
+    def start_lead(self, _: Team, lead: TeamMember) -> None:
+        """Team 创建成功后启动 Lead 收件箱 Runner，持续等待成员回传。"""
+
+        if lead.member_id in self._lead_runners:
+            raise RuntimeError(f"Team Lead“{lead.member_id}”的 Runner 已启动。")
+        runner = self._create_lead_runner(lead)
+        runner.start()
+        self._lead_runners[lead.member_id] = runner
 
     def stop(self) -> None:
         """请求停止当前进程启动的全部成员 Runner，不等待线程 join。"""
 
-        for runner in self._runners.values():
+        for runner in (*self._member_runners.values(), *self._lead_runners.values()):
             runner.stop()
 
 
@@ -295,6 +311,7 @@ def register_cli_cron_capability(
     scheduler_waiter: CronWaiter | None = None,
     processor_waiter: CronWaiter | None = None,
     thread_factory: CronThreadFactory | None = None,
+    execution_gate: LockCronExecutionGate | None = None,
 ) -> CliCronCapability:
     """装配父侧 Cron 工具和两条后台线程，不让 Cron 领域依赖 Runtime。"""
 
@@ -320,7 +337,7 @@ def register_cli_cron_capability(
     registry.register(CancelCronTool(service))
 
     trigger_queue = InMemoryCronTriggerQueue()
-    execution_gate = LockCronExecutionGate()
+    active_execution_gate = execution_gate if execution_gate is not None else LockCronExecutionGate()
 
     def run_scheduled_prompt(prompt: str) -> None:
         result = execute_prompt(
@@ -346,14 +363,14 @@ def register_cli_cron_capability(
     )
     processor = CronQueueProcessor(
         trigger_queue=trigger_queue,
-        gate=execution_gate,
+        gate=active_execution_gate,
         consumer=consumer,
     )
     active_thread_factory = (
         thread_factory if thread_factory is not None else DaemonCronThreadFactory()
     )
     return CliCronCapability(
-        execution_gate=execution_gate,
+        execution_gate=active_execution_gate,
         scheduler_runner=CronSchedulerRunner(
             scheduler=scheduler,
             waiter=scheduler_waiter if scheduler_waiter is not None else EventCronWaiter(),
@@ -373,6 +390,7 @@ def register_cli_team_capability(
     registry: ToolRegistry,
     repository: StateRepository,
     loop: MinimalAgentLoop,
+    execution_gate: TeamExecutionGate,
     clock: SystemTeamClock | None = None,
     waiter: TeamWaiter | None = None,
     thread_factory: TeamThreadFactory | None = None,
@@ -383,6 +401,11 @@ def register_cli_team_capability(
         raise TypeError("workspace 必须是 Path 对象。")
     if not isinstance(registry, ToolRegistry):
         raise TypeError("registry 必须是 ToolRegistry 对象。")
+    if not all(
+        callable(getattr(execution_gate, method_name, None))
+        for method_name in ("try_acquire", "release")
+    ):
+        raise TypeError("execution_gate 必须提供 try_acquire 和 release 方法。")
     state_root = workspace / "var" / "state" / "teams"
     dispatcher = EventTeamDispatcher()
     service = TeamService(
@@ -422,8 +445,27 @@ def register_cli_team_capability(
             thread_factory=active_thread_factory,
         )
 
-    capability = CliTeamCapability(create_runner, {})
-    registry.register(CreateTeamTool(service))
+    def print_lead_response(execution: TeamPromptExecution) -> None:
+        """在自动 Lead Run 完成后展示响应，保持其 Transcript 与前台 Run 独立。"""
+
+        print(f"\n[team] {execution.response_text}")
+
+    def create_lead_runner(lead: TeamMember) -> TeamLeadInboxRunner:
+        return TeamLeadInboxRunner(
+            member=lead,
+            inbox_repository=JsonFileTeamInboxRepository(state_root),
+            agent_executor=executor,
+            execution_gate=execution_gate,
+            id_generator=UuidTeamIdGenerator(),
+            clock=active_clock,
+            signal_registry=dispatcher,
+            waiter=active_waiter,
+            thread_factory=active_thread_factory,
+            on_execution_completed=print_lead_response,
+        )
+
+    capability = CliTeamCapability(create_runner, create_lead_runner, {}, {})
+    registry.register(CreateTeamTool(service, on_team_created=capability.start_lead))
     registry.register(AddTeammateTool(service, on_teammate_added=capability.start_member))
     registry.register(AssignTeamWorkTool(service))
     registry.register(SendTeamMessageTool(service))
@@ -619,18 +661,21 @@ def main() -> None:
         output_continuation_policy=create_output_continuation_policy(),
         pending_user_message_source=background_task_notifications,
     )
-    team_capability = register_cli_team_capability(
-        workspace=workspace,
-        registry=tool_registry,
-        repository=repository,
-        loop=loop,
-    )
+    execution_gate = LockCronExecutionGate()
     cron_capability = register_cli_cron_capability(
         workspace=workspace,
         registry=tool_registry,
         session=session,
         repository=repository,
         loop=loop,
+        execution_gate=execution_gate,
+    )
+    team_capability = register_cli_team_capability(
+        workspace=workspace,
+        registry=tool_registry,
+        repository=repository,
+        loop=loop,
+        execution_gate=execution_gate,
     )
     cron_capability.start()
 

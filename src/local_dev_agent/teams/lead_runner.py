@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from threading import Event, Thread
 
 from .inbox_prompt import format_inbox_prompt
@@ -16,7 +17,7 @@ from .ports import (
     TeamThreadFactory,
     TeamWaiter,
 )
-from .schema import InboxReservation, TeamMember
+from .schema import InboxReservation, TeamMember, TeamPromptExecution
 
 
 logger = logging.getLogger(__name__)
@@ -37,6 +38,7 @@ class TeamLeadInboxRunner:
         signal_registry: TeamSignalRegistry,
         waiter: TeamWaiter,
         thread_factory: TeamThreadFactory,
+        on_execution_completed: Callable[[TeamPromptExecution], None] | None = None,
         batch_size: int = 10,
         check_interval_seconds: float = 1.0,
     ) -> None:
@@ -67,6 +69,8 @@ class TeamLeadInboxRunner:
             raise TypeError("waiter 必须提供 wait 方法。")
         if not callable(getattr(thread_factory, "start", None)):
             raise TypeError("thread_factory 必须提供 start 方法。")
+        if on_execution_completed is not None and not callable(on_execution_completed):
+            raise TypeError("on_execution_completed 必须是可调用对象或 None。")
         if isinstance(batch_size, bool) or not isinstance(batch_size, int) or batch_size < 1:
             raise ValueError("字段“batch_size”必须是正整数。")
         if (
@@ -84,6 +88,7 @@ class TeamLeadInboxRunner:
         self._signal_registry = signal_registry
         self._waiter = waiter
         self._thread_factory = thread_factory
+        self._on_execution_completed = on_execution_completed
         self._batch_size = batch_size
         self._check_interval_seconds = float(check_interval_seconds)
         self._stop_event = Event()
@@ -137,6 +142,7 @@ class TeamLeadInboxRunner:
                     consumer_run_id=execution.run_id,
                     consumed_at=self._clock.now(),
                 )
+                self._notify_execution_completed(execution)
                 return True
             except Exception:
                 self._release_after_failure(reservation)
@@ -148,6 +154,20 @@ class TeamLeadInboxRunner:
                 return False
         finally:
             self._execution_gate.release()
+
+    def _notify_execution_completed(self, execution: TeamPromptExecution) -> None:
+        """终端展示失败不应导致已确认的 Lead 收件箱消息被重新处理。"""
+
+        if self._on_execution_completed is None:
+            return
+        try:
+            self._on_execution_completed(execution)
+        except Exception:
+            logger.warning(
+                "输出 Team Lead 自动 Run 结果失败，消息已确认消费。",
+                exc_info=True,
+                extra={"member_id": self._member.member_id, "run_id": execution.run_id},
+            )
 
     def _release_after_failure(self, reservation: InboxReservation) -> None:
         """优先释放本次预留；释放失败不掩盖 Lead Run 的原始异常。"""

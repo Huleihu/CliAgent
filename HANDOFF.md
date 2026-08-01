@@ -223,6 +223,7 @@
 - 已完成 `learnClaude/s15_agent_teams` 的第 5 个教学式小步与章节闭环：CLI 组合根新增 Team JSON 仓储、父 Agent 工具、`RuntimeTeamAgentExecutor`、进程内 Dispatcher 与成员 Runner 装配。Team Lead 通过 `create_team` 创建 Team；`add_teammate` 必须绑定一个已存在的独立 Session，登记成功后才为该成员启动 daemon Runner。Team 工具只在父目录注册，S6 子 Agent 固定四项文件工具白名单保持不变；系统提示与 README 已明确 S6 一次性委派、S15 持久成员、S12/Todo/S13/S14 隔离、durable 和进程退出语义。`MinimalAgentLoop`、`runtime/loop.py` 与 `runtime/notifications.py` 均未修改。
 - 已完成 S15 结果回传的第 1 个教学式小步：新增 `TeamResultReporter` 端口及 `InboxTeamResultReporter`，成员成功 Run 后只为本批 `ASSIGNMENT` 消息生成 `RESULT`，回传给派活消息的发送者；结果正文携带成员、实际 Run 与来源任务消息标识。`TeamMemberRunner` 先持久化结果、再确认原收件箱预留；结果回传失败会释放原消息，避免静默丢失。CLI 组合根已装配该适配器并复用同一 Dispatcher 唤醒接收者。当前尚未新增 Lead Runner，因此 RESULT 会持久化到 Lead 收件箱但不会自动触发 Lead Run；Assignment/S12/Todo/S13/S14 状态均未改变，`MinimalAgentLoop`、`runtime/loop.py` 与 `runtime/notifications.py` 均未修改。
 - 已完成 S15 结果自动消费的第 2 个教学式小步：新增 `TeamExecutionGate` 端口、共享的收件箱 prompt 格式化函数与 `TeamLeadInboxRunner`。Lead Runner 先非阻塞取得共享执行租约，成功后才预留 Lead 收件箱并经既有 Runtime 创建独立 Run；Run 或确认失败会释放消息，任何路径都会释放租约，Dispatcher 仅负责 Event 唤醒。当前该 Runner 尚未由 CLI 创建或启动，未接入终端输出，也尚未与 Cron/前台输入共用实际锁；`MinimalAgentLoop`、`runtime/loop.py` 与 `runtime/notifications.py` 均未修改。
+- 已完成 S15 结果自动消费的第 3 个教学式小步：`CreateTeamTool` 在 Team 与 Lead 身份持久化成功后回调启动 Lead Runner；CLI 组合根创建唯一 `LockCronExecutionGate` 并注入前台输入、Cron Queue Processor 与 Lead Runner，三者因此串行访问 Lead Session，Member Runner 保持并行。自动 Lead Run 在收件箱确认后以 `[team]` 前缀输出最终响应；展示失败只记录日志，不会重投已确认消息。组合测试已覆盖 `ASSIGNMENT → Member Run → RESULT → Lead Run`，两次模型请求分别归属成员与 Lead Session。`MinimalAgentLoop`、`runtime/loop.py` 与 `runtime/notifications.py` 均未修改。
 
 ## 验证
 
@@ -235,6 +236,7 @@
 - S15 结果回传第 1 步：`python -m pytest tests/unit/teams` 通过（24 passed）；`python -m ruff check src/local_dev_agent/teams tests/unit/teams src/local_dev_agent/main.py tests/unit/test_main.py` 通过。
 - S15 结果回传第 1 步追加 CLI 回归：`python -m pytest tests/unit/teams tests/unit/test_main.py` 通过（45 passed）。
 - S15 结果自动消费第 2 步：`python -m pytest tests/unit/teams` 通过（28 passed）；`python -m ruff check src/local_dev_agent/teams tests/unit/teams` 通过。
+- S15 结果自动消费第 3 步：`python -m pytest tests/unit/teams tests/unit/tools/test_team_tools.py tests/unit/test_main.py` 通过（54 passed）；`python -m ruff check src/local_dev_agent/main.py src/local_dev_agent/teams src/local_dev_agent/tools/builtin/team_tools.py tests/unit/teams tests/unit/test_main.py tests/unit/tools/test_team_tools.py` 通过。
 - 已人工核对 `TDD.md` 与 `AGENT_REQUIREMENTS_CHECKLIST.txt` 的 S01–S30 覆盖关系；本次仅修改文档，未运行代码测试。
 - `python -m pytest`：519 passed（覆盖既有 S1-S10 闭环，以及 S11 瞬态错误契约、纯恢复策略、可注入执行器、SDK 重试收敛、父 Runtime 重试/fallback、S8 共存和 CLI 装配）。
 - `python -m ruff check src tests`：发现 1 个既有错误：`tests/unit/memory/test_consolidation.py:9:59` 的单行分号触发 `E702`；已用 `git show HEAD:...` 确认该行在本步前已存在，新增 S10 文件的定向 Ruff 检查通过。

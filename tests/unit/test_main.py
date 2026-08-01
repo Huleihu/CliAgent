@@ -13,6 +13,7 @@ from local_dev_agent.main import create_permission_hook_runner
 from local_dev_agent.main import create_context_manager
 from local_dev_agent.main import create_memory_loader
 from local_dev_agent.main import create_task_service
+from local_dev_agent.cron import LockCronExecutionGate
 from local_dev_agent.main import create_subagent_runner
 from local_dev_agent.main import create_transient_recovery_executor
 from local_dev_agent.main import create_tool_registry
@@ -433,9 +434,10 @@ def test_cli_team_composition_registers_parent_tools_and_starts_registered_membe
     repository.save_session(parent_session)
     repository.save_session(child_session)
     registry = create_tool_registry(workspace)
+    model = FakeModel(ModelResponse.text_completion("成员处理完成。"))
     loop = MinimalAgentLoop(
         repository,
-        FakeModel(ModelResponse.text_completion("成员处理完成。")),
+        model,
     )
     thread_factory = InlineTeamThreadFactory()
     capability = register_cli_team_capability(
@@ -443,6 +445,7 @@ def test_cli_team_composition_registers_parent_tools_and_starts_registered_membe
         registry=registry,
         repository=repository,
         loop=loop,
+        execution_gate=LockCronExecutionGate(),
         waiter=StopAfterFirstTeamWait(),
         thread_factory=thread_factory,  # type: ignore[arg-type]
     )
@@ -463,7 +466,7 @@ def test_cli_team_composition_registers_parent_tools_and_starts_registered_membe
     )
     team_id = created["team"]["team_id"]  # type: ignore[index]
     lead_member_id = created["lead"]["member_id"]  # type: ignore[index]
-    registry.get("add_teammate").run(
+    member = registry.get("add_teammate").run(
         {
             "team_id": team_id,
             "lead_member_id": lead_member_id,
@@ -473,6 +476,18 @@ def test_cli_team_composition_registers_parent_tools_and_starts_registered_membe
         },
         context=context,
     )
+    registry.get("assign_team_work").run(
+        {
+            "team_id": team_id,
+            "lead_member_id": lead_member_id,
+            "assignee_member_id": member["member_id"],
+            "prompt": "检查数据库迁移。",
+        },
+        context=context,
+    )
+
+    assert capability._member_runners[member["member_id"]].process_once() is True
+    assert capability._lead_runners[lead_member_id].process_once() is True
 
     assert {
         "create_team",
@@ -480,8 +495,11 @@ def test_cli_team_composition_registers_parent_tools_and_starts_registered_membe
         "assign_team_work",
         "send_team_message",
     }.issubset(definition.name for definition in registry.list_definitions())
-    assert len(thread_factory.names) == 1
-    assert thread_factory.names[0].startswith("team-member-member-")
+    assert len(thread_factory.names) == 2
+    assert thread_factory.names[0].startswith("team-lead-member-")
+    assert thread_factory.names[1].startswith("team-member-member-")
+    assert len(model.requests) == 2
+    assert model.requests[1].session_id == parent_session.session_id
     child_registry = SubagentToolRegistryFactory(registry, SubagentPolicy()).create()
     assert not {
         "create_team",

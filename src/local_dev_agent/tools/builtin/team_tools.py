@@ -105,8 +105,16 @@ def _operation_id(context: ToolExecutionContext, *, prefix: str) -> str:
 class CreateTeamTool(Tool):
     """以当前父 Agent Session 创建 Team 和其 Lead 成员。"""
 
-    def __init__(self, service: TeamService) -> None:
+    def __init__(
+        self,
+        service: TeamService,
+        *,
+        on_team_created: Callable[[Team, TeamMember], None] | None = None,
+    ) -> None:
         self._service = _service(service)
+        if on_team_created is not None and not callable(on_team_created):
+            raise TypeError("on_team_created 必须是可调用对象或 None。")
+        self._on_team_created = on_team_created
         self._definition = ToolDefinition(
             name="create_team",
             description="创建一个持久 Team，并将当前会话绑定为其 Lead。",
@@ -139,6 +147,8 @@ class CreateTeamTool(Tool):
             lead_role=_text(arguments, "lead_role"),
             lead_session_id=execution_context.session_id,
         )
+        if self._on_team_created is not None:
+            self._on_team_created(team, lead)
         return {"team": _team_data(team), "lead": _member_data(lead)}
 
 

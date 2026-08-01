@@ -101,6 +101,16 @@ class InlineThreadFactory:
         return object()
 
 
+class RecordingCompletionSink:
+    """记录已经成功确认收件箱后的 Lead 自动响应。"""
+
+    def __init__(self) -> None:
+        self.executions: list[TeamPromptExecution] = []
+
+    def __call__(self, execution: TeamPromptExecution) -> None:
+        self.executions.append(execution)
+
+
 def _lead() -> TeamMember:
     return TeamMember.create(
         member_id="lead-001",
@@ -135,6 +145,7 @@ def _runner(
     dispatcher: EventTeamDispatcher | None = None,
     waiter: object | None = None,
     thread_factory: object | None = None,
+    completion_sink: object | None = None,
 ) -> TeamLeadInboxRunner:
     return TeamLeadInboxRunner(
         member=_lead(),
@@ -146,6 +157,7 @@ def _runner(
         signal_registry=dispatcher or EventTeamDispatcher(),
         waiter=waiter or StopAfterFirstWait(),  # type: ignore[arg-type]
         thread_factory=thread_factory or InlineThreadFactory(),  # type: ignore[arg-type]
+        on_execution_completed=completion_sink,  # type: ignore[arg-type]
     )
 
 
@@ -226,4 +238,23 @@ def test_lead_runner_registers_for_dispatcher_wakeups(tmp_path: Path) -> None:
     runner.start()
 
     assert thread_factory.names == ["team-lead-lead-001"]
+    assert inbox.list_unread(team_id="team-001", recipient_member_id="lead-001") == ()
+
+
+def test_lead_runner_notifies_completion_after_acknowledging_message(tmp_path: Path) -> None:
+    inbox = JsonFileTeamInboxRepository(tmp_path)
+    _send_result(inbox)
+    completion_sink = RecordingCompletionSink()
+
+    assert (
+        _runner(
+            tmp_path,
+            gate=Gate(),
+            executor=RecordingExecutor(),
+            completion_sink=completion_sink,
+        ).process_once()
+        is True
+    )
+
+    assert [execution.response_text for execution in completion_sink.executions] == ["已收到成员结果。"]
     assert inbox.list_unread(team_id="team-001", recipient_member_id="lead-001") == ()
