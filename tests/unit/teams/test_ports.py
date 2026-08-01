@@ -13,6 +13,7 @@ from local_dev_agent.teams import (
     TeamMember,
     TeamMemberRepository,
     TeamMessage,
+    TeamMessageDraft,
     TeamPromptExecution,
     TeamRepository,
 )
@@ -97,8 +98,18 @@ class InMemoryAssignmentRepository:
 
 
 class InMemoryInboxRepository:
-    def send(self, message: TeamMessage) -> TeamMessage:
-        return message
+    def send(self, draft: TeamMessageDraft) -> TeamMessage:
+        return TeamMessage.create(
+            message_id=draft.message_id,
+            team_id=draft.team_id,
+            sender_member_id=draft.sender_member_id,
+            recipient_member_id=draft.recipient_member_id,
+            sequence=1,
+            message_type=draft.message_type,
+            content=draft.content,
+            idempotency_key=draft.idempotency_key,
+            created_at=draft.created_at,
+        )
 
     def list_unread(self, *, team_id: str, recipient_member_id: str) -> tuple[TeamMessage, ...]:
         return ()

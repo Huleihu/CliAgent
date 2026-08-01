@@ -10,6 +10,7 @@ from .schema import (
     TeamAssignment,
     TeamMember,
     TeamMessage,
+    TeamMessageDraft,
     TeamPromptExecution,
 )
 
@@ -79,8 +80,8 @@ class TeamAssignmentRepository(Protocol):
 class TeamInboxRepository(Protocol):
     """保存接收方有序消息，并提供预留—确认消费协议。"""
 
-    def send(self, message: TeamMessage) -> TeamMessage:
-        """保存一条消息；相同幂等键的处理由适配器定义。"""
+    def send(self, draft: TeamMessageDraft) -> TeamMessage:
+        """原子分配接收方 sequence 并保存消息；相同幂等键的处理由适配器定义。"""
 
     def list_unread(
         self,

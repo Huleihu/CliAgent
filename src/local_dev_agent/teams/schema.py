@@ -65,6 +65,72 @@ class TeamMessageDeliveryStatus(StrEnum):
 
 
 @dataclass(frozen=True, slots=True)
+class TeamMessageDraft:
+    """等待收件箱分配 sequence 后才成为正式消息的投递请求。"""
+
+    message_id: str
+    team_id: str
+    sender_member_id: str
+    recipient_member_id: str
+    message_type: TeamMessageType
+    content: str
+    idempotency_key: str
+    created_at: datetime
+
+    def __post_init__(self) -> None:
+        """将发送方和接收方事实固定下来，把顺序分配留给加锁的收件箱。"""
+
+        for field_name in (
+            "message_id",
+            "team_id",
+            "sender_member_id",
+            "recipient_member_id",
+            "content",
+            "idempotency_key",
+        ):
+            object.__setattr__(
+                self,
+                field_name,
+                _require_nonempty_text(field_name, getattr(self, field_name)),
+            )
+        if self.sender_member_id == self.recipient_member_id:
+            raise ValueError("消息发送方和接收方不能是同一成员。")
+        if not isinstance(self.message_type, TeamMessageType):
+            raise ValueError("字段“message_type”必须是 TeamMessageType。")
+        object.__setattr__(
+            self,
+            "created_at",
+            normalize_utc_timestamp(self.created_at, subject="Team 消息草稿"),
+        )
+
+    @classmethod
+    def create(
+        cls,
+        *,
+        team_id: str,
+        sender_member_id: str,
+        recipient_member_id: str,
+        message_type: TeamMessageType,
+        content: str,
+        idempotency_key: str,
+        message_id: str | None = None,
+        created_at: datetime | None = None,
+    ) -> "TeamMessageDraft":
+        """创建未分配 sequence 的投递草稿。"""
+
+        return cls(
+            message_id=message_id or str(uuid4()),
+            team_id=team_id,
+            sender_member_id=sender_member_id,
+            recipient_member_id=recipient_member_id,
+            message_type=message_type,
+            content=content,
+            idempotency_key=idempotency_key,
+            created_at=created_at or datetime.now(timezone.utc),
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class Team:
     """一个工作区中的协作边界，只保存 Team 身份和 Lead 成员关联。"""
 
@@ -433,7 +499,7 @@ class TeamMessage:
         message_id: str | None = None,
         created_at: datetime | None = None,
     ) -> "TeamMessage":
-        """创建未读消息；顺序由后续 Inbox 仓储在接收方范围内分配。"""
+        """创建已分配顺序的未读消息，仅供收件箱仓储内部使用。"""
 
         return cls(
             message_id=message_id or str(uuid4()),
