@@ -3,7 +3,7 @@
 from collections.abc import Callable, Sequence
 from datetime import datetime
 from threading import Event, Thread
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 
 from .protocol_state import TeamProtocolState
 from .schema import (
@@ -15,6 +15,9 @@ from .schema import (
     TeamMessageDraft,
     TeamPromptExecution,
 )
+
+if TYPE_CHECKING:
+    from .protocol_dispatch import TeamProtocolDispatchResult
 
 
 class TeamIdGenerator(Protocol):
@@ -135,6 +138,13 @@ class TeamProtocolStateRepository(Protocol):
 
     def replace(self, state: TeamProtocolState) -> TeamProtocolState:
         """以新的完整协议状态替换既有请求。"""
+
+
+class TeamProtocolMessageDispatcher(Protocol):
+    """将单条收件箱消息解释为协议路由结论，不负责预留、确认或执行 Agent。"""
+
+    def dispatch(self, message: TeamMessage) -> "TeamProtocolDispatchResult":
+        """返回消息应转交 Agent、由系统处理、停止成员或作为失败处理的结论。"""
 
 
 class TeamDispatcher(Protocol):

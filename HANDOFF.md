@@ -1,6 +1,8 @@
 # 项目交接
 
-> S16 第 3 步（未提交）：新增 `TeamProtocolCoordinator` 与结构化 dispatch 结果。它依赖协议状态仓储、收件箱和时钟端口，负责可幂等地创建 request、按消息类型分派，并只在匹配 response 抵达时持久化终态。`SHUTDOWN_REQUEST` 自动投递批准 response 后返回 `STOP_MEMBER` 意图，但本步不停止任何 Runner；`PLAN_APPROVAL` request/response 按需要转交 Agent；原有 S15 `PLAIN`、`ASSIGNMENT`、`RESULT` 继续透传。未知请求、类型或参与方不匹配均返回 `FAILED` 且不改状态。验证：已授权 pytest 环境中 `tests/unit/teams/test_protocol_dispatch.py` 4 passed，定向 Ruff 通过。下一步接入 Runner，仍不得修改 `MinimalAgentLoop`、`runtime/loop.py` 或 `runtime/notifications.py`。
+> S16 第 4 步（未提交）：新增 `TeamProtocolMessageDispatcher` 端口和 `TeamProtocolInboxRouter` 批次路由器；`InboxReservation` 现在可安全划分为子批次。Member 与 Lead Runner 可选地接入协议分派器：只有 `FORWARD_TO_AGENT` 消息创建 Runtime Run，`HANDLED` 与 `FAILED` 以稳定协议消费标识确认，`STOP_MEMBER` 确认关闭请求、释放同批尚未执行消息并停止当前 Runner。Lead 的纯协议响应匹配不申请共享执行锁，计划审批请求仍在校验后申请锁并转交 Agent。当前 CLI 尚未构造或注入协调器，因此既有 S15 默认路径不变。验证：定向 pytest 16 passed，定向 Ruff 通过。下一步在组合根装配协议状态仓储和协调器，并补充端到端验证；仍不得修改 `MinimalAgentLoop`、`runtime/loop.py` 或 `runtime/notifications.py`。
+
+> S16 第 3 步（已提交 `bbc79fe`）：新增 `TeamProtocolCoordinator` 与结构化 dispatch 结果。它依赖协议状态仓储、收件箱和时钟端口，负责可幂等地创建 request、按消息类型分派，并只在匹配 response 抵达时持久化终态。`SHUTDOWN_REQUEST` 自动投递批准 response 后返回 `STOP_MEMBER` 意图，但本步不停止任何 Runner；`PLAN_APPROVAL` request/response 按需要转交 Agent；原有 S15 `PLAIN`、`ASSIGNMENT`、`RESULT` 继续透传。未知请求、类型或参与方不匹配均返回 `FAILED` 且不改状态。验证：已授权 pytest 环境中 `tests/unit/teams/test_protocol_dispatch.py` 4 passed，定向 Ruff 通过。下一步接入 Runner，仍不得修改 `MinimalAgentLoop`、`runtime/loop.py` 或 `runtime/notifications.py`。
 
 ## 当前状态
 

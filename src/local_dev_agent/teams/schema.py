@@ -706,6 +706,25 @@ class InboxReservation:
         if any(message.reserved_at != self.reserved_at for message in self.messages):
             raise ValueError("预留消息必须使用同一个预留时间。")
 
+    def subset(self, messages: Iterable[TeamMessage]) -> "InboxReservation":
+        """从同一次预留中划出子批次，供协议消息和 Agent 消息分别确认或释放。"""
+
+        selected_messages = tuple(messages)
+        if not selected_messages:
+            raise ValueError("预留消息子集不能为空。")
+        if not all(isinstance(message, TeamMessage) for message in selected_messages):
+            raise TypeError("预留消息子集只能包含 TeamMessage。")
+        selected_ids = tuple(message.message_id for message in selected_messages)
+        original_by_id = {message.message_id: message for message in self.messages}
+        if len(set(selected_ids)) != len(selected_ids) or any(
+            message_id not in original_by_id for message_id in selected_ids
+        ):
+            raise ValueError("预留消息子集必须是不重复的原预留消息。")
+        ordered_messages = tuple(
+            message for message in self.messages if message.message_id in set(selected_ids)
+        )
+        return replace(self, messages=ordered_messages)
+
 
 @dataclass(frozen=True, slots=True)
 class TeamPromptExecution:

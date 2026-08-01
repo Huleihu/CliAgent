@@ -5,10 +5,16 @@ from threading import Event
 from local_dev_agent.teams import (
     EventTeamDispatcher,
     JsonFileTeamInboxRepository,
+    JsonFileTeamProtocolStateRepository,
     TeamLeadInboxRunner,
     TeamMember,
     TeamMessageDraft,
     TeamMessageType,
+    TeamProtocolCoordinator,
+    TeamProtocolDecision,
+    TeamProtocolState,
+    TeamProtocolStatus,
+    TeamProtocolType,
     TeamPromptExecution,
 )
 from local_dev_agent.teams.json_codec import decode_inbox
@@ -146,6 +152,7 @@ def _runner(
     waiter: object | None = None,
     thread_factory: object | None = None,
     completion_sink: object | None = None,
+    protocol_dispatcher: object | None = None,
 ) -> TeamLeadInboxRunner:
     return TeamLeadInboxRunner(
         member=_lead(),
@@ -158,6 +165,7 @@ def _runner(
         waiter=waiter or StopAfterFirstWait(),  # type: ignore[arg-type]
         thread_factory=thread_factory or InlineThreadFactory(),  # type: ignore[arg-type]
         on_execution_completed=completion_sink,  # type: ignore[arg-type]
+        protocol_dispatcher=protocol_dispatcher,  # type: ignore[arg-type]
     )
 
 
@@ -258,3 +266,103 @@ def test_lead_runner_notifies_completion_after_acknowledging_message(tmp_path: P
 
     assert [execution.response_text for execution in completion_sink.executions] == ["已收到成员结果。"]
     assert inbox.list_unread(team_id="team-001", recipient_member_id="lead-001") == ()
+
+
+def test_lead_runner_matches_shutdown_response_without_runtime_or_execution_gate(
+    tmp_path: Path,
+) -> None:
+    inbox = JsonFileTeamInboxRepository(tmp_path)
+    coordinator = TeamProtocolCoordinator(
+        state_repository=JsonFileTeamProtocolStateRepository(tmp_path),
+        inbox_repository=inbox,
+        clock=AdvancingClock(),
+    )
+    shutdown = TeamProtocolState.create(
+        request_id="shutdown-001",
+        team_id="team-001",
+        protocol_type=TeamProtocolType.SHUTDOWN,
+        sender_member_id="lead-001",
+        target_member_id="member-001",
+        payload="请安全停止。",
+        created_at=TIMESTAMP,
+    )
+    coordinator.open_request(
+        state=shutdown,
+        message_id="shutdown-request-001",
+        idempotency_key="protocol:shutdown-request-001",
+    )
+    response = coordinator.send_response(
+        request_id=shutdown.request_id,
+        sender_member_id="member-001",
+        decision=TeamProtocolDecision.APPROVED,
+        content="成员已安全停止。",
+        message_id="shutdown-response-001",
+        idempotency_key="protocol:shutdown-response-001",
+    )
+    gate = Gate(available=False)
+    executor = RecordingExecutor()
+
+    assert (
+        _runner(
+            tmp_path,
+            gate=gate,
+            executor=executor,
+            protocol_dispatcher=coordinator,
+        ).process_once()
+        is True
+    )
+
+    assert response.message_id == "shutdown-response-001"
+    assert executor.prompts == []
+    assert gate.attempts == 0
+    persisted_state = JsonFileTeamProtocolStateRepository(tmp_path).get(shutdown.request_id)
+    assert persisted_state is not None
+    assert persisted_state.status is TeamProtocolStatus.APPROVED
+    assert inbox.list_unread(team_id="team-001", recipient_member_id="lead-001") == ()
+
+
+def test_lead_runner_forwards_plan_request_to_runtime_after_protocol_validation(
+    tmp_path: Path,
+) -> None:
+    inbox = JsonFileTeamInboxRepository(tmp_path)
+    coordinator = TeamProtocolCoordinator(
+        state_repository=JsonFileTeamProtocolStateRepository(tmp_path),
+        inbox_repository=inbox,
+        clock=AdvancingClock(),
+    )
+    plan_request = TeamProtocolState.create(
+        request_id="plan-001",
+        team_id="team-001",
+        protocol_type=TeamProtocolType.PLAN_APPROVAL,
+        sender_member_id="member-001",
+        target_member_id="lead-001",
+        payload="先补充认证适配器测试，再迁移调用方。",
+        created_at=TIMESTAMP,
+    )
+    coordinator.open_request(
+        state=plan_request,
+        message_id="plan-request-001",
+        idempotency_key="protocol:plan-request-001",
+    )
+    gate = Gate()
+    executor = RecordingExecutor()
+
+    assert (
+        _runner(
+            tmp_path,
+            gate=gate,
+            executor=executor,
+            protocol_dispatcher=coordinator,
+        ).process_once()
+        is True
+    )
+
+    assert gate.attempts == 1
+    assert gate.releases == 1
+    assert executor.prompts == [
+        "[Team 收件箱]\n#1 来自 member-001（plan_approval_request）："
+        "先补充认证适配器测试，再迁移调用方。"
+    ]
+    persisted_state = JsonFileTeamProtocolStateRepository(tmp_path).get(plan_request.request_id)
+    assert persisted_state is not None
+    assert persisted_state.status is TeamProtocolStatus.PENDING

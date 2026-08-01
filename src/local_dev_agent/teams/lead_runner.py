@@ -13,11 +13,13 @@ from .ports import (
     TeamExecutionGate,
     TeamIdGenerator,
     TeamInboxRepository,
+    TeamProtocolMessageDispatcher,
     TeamSignalRegistry,
     TeamThreadFactory,
     TeamWaiter,
 )
-from .schema import InboxReservation, TeamMember, TeamPromptExecution
+from .protocol_routing import TeamProtocolInboxRouter
+from .schema import InboxReservation, TeamMember, TeamMessage, TeamPromptExecution
 
 
 logger = logging.getLogger(__name__)
@@ -38,6 +40,7 @@ class TeamLeadInboxRunner:
         signal_registry: TeamSignalRegistry,
         waiter: TeamWaiter,
         thread_factory: TeamThreadFactory,
+        protocol_dispatcher: TeamProtocolMessageDispatcher | None = None,
         on_execution_completed: Callable[[TeamPromptExecution], None] | None = None,
         batch_size: int = 10,
         check_interval_seconds: float = 1.0,
@@ -69,6 +72,10 @@ class TeamLeadInboxRunner:
             raise TypeError("waiter 必须提供 wait 方法。")
         if not callable(getattr(thread_factory, "start", None)):
             raise TypeError("thread_factory 必须提供 start 方法。")
+        if protocol_dispatcher is not None and not callable(
+            getattr(protocol_dispatcher, "dispatch", None)
+        ):
+            raise TypeError("protocol_dispatcher 必须提供 dispatch 方法或为 None。")
         if on_execution_completed is not None and not callable(on_execution_completed):
             raise TypeError("on_execution_completed 必须是可调用对象或 None。")
         if isinstance(batch_size, bool) or not isinstance(batch_size, int) or batch_size < 1:
@@ -88,6 +95,11 @@ class TeamLeadInboxRunner:
         self._signal_registry = signal_registry
         self._waiter = waiter
         self._thread_factory = thread_factory
+        self._protocol_router = (
+            TeamProtocolInboxRouter(dispatcher=protocol_dispatcher)
+            if protocol_dispatcher is not None
+            else None
+        )
         self._on_execution_completed = on_execution_completed
         self._batch_size = batch_size
         self._check_interval_seconds = float(check_interval_seconds)
@@ -117,43 +129,124 @@ class TeamLeadInboxRunner:
     def process_once(self) -> bool:
         """空闲时才预留 Lead 消息；Run 或确认失败时释放本批消息。"""
 
+        if self._protocol_router is not None:
+            return self._process_protocol_messages()
         if not self._execution_gate.try_acquire():
             return False
         try:
-            reservation = self._inbox_repository.reserve_unread(
-                team_id=self._member.team_id,
-                recipient_member_id=self._member.member_id,
-                reservation_id=self._id_generator.new_id(kind="lead-reservation"),
-                reserved_at=self._clock.now(),
-                limit=self._batch_size,
-            )
+            reservation = self._reserve_messages()
             if reservation is None:
                 return False
-            try:
-                execution = self._agent_executor.execute(
-                    member=self._member,
-                    prompt=format_inbox_prompt(reservation.messages),
-                )
-                if execution.session_id != self._member.session_id:
-                    raise ValueError("Team Lead 执行结果不属于该成员的 Session。")
-                self._inbox_repository.acknowledge(
-                    reservation,
-                    consumer_session_id=execution.session_id,
-                    consumer_run_id=execution.run_id,
-                    consumed_at=self._clock.now(),
-                )
-                self._notify_execution_completed(execution)
-                return True
-            except Exception:
-                self._release_after_failure(reservation)
-                logger.warning(
-                    "Team Lead 收件箱 Run 失败，已释放收件箱预留消息等待后续重投。",
-                    exc_info=True,
-                    extra={"member_id": self._member.member_id},
-                )
-                return False
+            return self._execute_agent_messages(reservation)
         finally:
             self._execution_gate.release()
+
+    def _process_protocol_messages(self) -> bool:
+        """协议状态更新无需占用 Lead 执行锁，只有转交 Agent 的消息才申请共享租约。"""
+
+        assert self._protocol_router is not None
+        reservation = self._reserve_messages()
+        if reservation is None:
+            return False
+        unprocessed_messages = list(reservation.messages)
+        try:
+            route = self._protocol_router.route(reservation.messages)
+            for message in route.messages_for_system:
+                self._acknowledge_protocol_message(reservation, message)
+                unprocessed_messages.remove(message)
+            for failure in route.failures:
+                logger.warning(
+                    "Team 协议消息校验失败，已确认消费且不会创建 Lead Run。",
+                    extra={
+                        "member_id": self._member.member_id,
+                        "message_id": failure.message.message_id,
+                        "reason": failure.failure_reason,
+                    },
+                )
+            if route.should_stop_member:
+                self._release_messages(reservation, unprocessed_messages)
+                self.stop()
+                return True
+            if not route.messages_for_agent:
+                return True
+            agent_reservation = reservation.subset(route.messages_for_agent)
+            if not self._execution_gate.try_acquire():
+                self._release_messages(reservation, unprocessed_messages)
+                return False
+            try:
+                return self._execute_agent_messages(agent_reservation)
+            finally:
+                self._execution_gate.release()
+        except Exception:
+            self._release_messages(reservation, unprocessed_messages)
+            logger.warning(
+                "Team 协议消息处理失败，已释放尚未确认的收件箱消息等待后续重投。",
+                exc_info=True,
+                extra={"member_id": self._member.member_id},
+            )
+            return False
+
+    def _reserve_messages(self) -> InboxReservation | None:
+        """为当前 Lead 预留一批有序消息，不在这里决定是否需要 Runtime Run。"""
+
+        return self._inbox_repository.reserve_unread(
+            team_id=self._member.team_id,
+            recipient_member_id=self._member.member_id,
+            reservation_id=self._id_generator.new_id(kind="lead-reservation"),
+            reserved_at=self._clock.now(),
+            limit=self._batch_size,
+        )
+
+    def _execute_agent_messages(self, reservation: InboxReservation) -> bool:
+        """在调用方已取得 Lead 执行租约时执行一个 Agent 消息子批次。"""
+
+        try:
+            execution = self._agent_executor.execute(
+                member=self._member,
+                prompt=format_inbox_prompt(reservation.messages),
+            )
+            if execution.session_id != self._member.session_id:
+                raise ValueError("Team Lead 执行结果不属于该成员的 Session。")
+            self._inbox_repository.acknowledge(
+                reservation,
+                consumer_session_id=execution.session_id,
+                consumer_run_id=execution.run_id,
+                consumed_at=self._clock.now(),
+            )
+            self._notify_execution_completed(execution)
+            return True
+        except Exception:
+            self._release_after_failure(reservation)
+            logger.warning(
+                "Team Lead 收件箱 Run 失败，已释放收件箱预留消息等待后续重投。",
+                exc_info=True,
+                extra={"member_id": self._member.member_id},
+            )
+            return False
+
+    def _acknowledge_protocol_message(
+        self,
+        reservation: InboxReservation,
+        message: TeamMessage,
+    ) -> None:
+        """协议消息不启动 Runtime Run，仍用稳定消费标识完整记录其已被系统处理。"""
+
+        self._inbox_repository.acknowledge(
+            reservation.subset((message,)),
+            consumer_session_id=self._member.session_id,
+            consumer_run_id=f"protocol-dispatch-{message.message_id}",
+            consumed_at=self._clock.now(),
+        )
+
+    def _release_messages(
+        self,
+        reservation: InboxReservation,
+        messages: list[TeamMessage],
+    ) -> None:
+        """仅释放尚未确认的预留子集，避免将已完成的协议状态更新重新投递。"""
+
+        if messages:
+            self._release_after_failure(reservation.subset(tuple(messages)))
 
     def _notify_execution_completed(self, execution: TeamPromptExecution) -> None:
         """终端展示失败不应导致已确认的 Lead 收件箱消息被重新处理。"""

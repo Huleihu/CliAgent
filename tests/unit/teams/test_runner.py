@@ -8,10 +8,14 @@ from local_dev_agent.teams import (
     EventTeamDispatcher,
     InboxTeamResultReporter,
     JsonFileTeamInboxRepository,
+    JsonFileTeamProtocolStateRepository,
     TeamMember,
     TeamMemberRunner,
     TeamMessageDraft,
     TeamMessageType,
+    TeamProtocolCoordinator,
+    TeamProtocolState,
+    TeamProtocolType,
     TeamPromptExecution,
 )
 from local_dev_agent.teams.json_codec import decode_inbox
@@ -133,6 +137,7 @@ def _runner(
     result_reporter: object | None = None,
     waiter: object | None = None,
     thread_factory: object | None = None,
+    protocol_dispatcher: object | None = None,
 ) -> TeamMemberRunner:
     dispatcher = EventTeamDispatcher()
     inbox = JsonFileTeamInboxRepository(tmp_path)
@@ -150,6 +155,7 @@ def _runner(
         signal_registry=dispatcher,
         waiter=waiter or StopAfterFirstWait(),  # type: ignore[arg-type]
         thread_factory=thread_factory or InlineThreadFactory(),  # type: ignore[arg-type]
+        protocol_dispatcher=protocol_dispatcher,  # type: ignore[arg-type]
     )
 
 
@@ -263,3 +269,50 @@ def test_runner_and_dispatcher_use_injected_event_waiter_and_thread_factory(
     assert thread_factory.names == ["team-member-member-001"]
     with pytest.raises(RuntimeError, match="已启动"):
         runner.start()
+
+
+def test_member_runner_confirms_shutdown_without_runtime_and_releases_earlier_work(
+    tmp_path: Path,
+) -> None:
+    inbox = JsonFileTeamInboxRepository(tmp_path)
+    _send(inbox)
+    coordinator = TeamProtocolCoordinator(
+        state_repository=JsonFileTeamProtocolStateRepository(tmp_path),
+        inbox_repository=inbox,
+        clock=AdvancingClock(),
+    )
+    shutdown = TeamProtocolState.create(
+        request_id="shutdown-001",
+        team_id="team-001",
+        protocol_type=TeamProtocolType.SHUTDOWN,
+        sender_member_id="lead-001",
+        target_member_id="member-001",
+        payload="请安全停止。",
+        created_at=TIMESTAMP,
+    )
+    coordinator.open_request(
+        state=shutdown,
+        message_id="shutdown-request-001",
+        idempotency_key="protocol:shutdown-request-001",
+    )
+    executor = RecordingExecutor()
+    runner = _runner(tmp_path, executor=executor, protocol_dispatcher=coordinator)
+
+    assert runner.process_once() is True
+
+    assert executor.prompts == []
+    assert runner._stop_event.is_set() is True
+    assert [
+        message.message_id
+        for message in inbox.list_unread(
+            team_id="team-001",
+            recipient_member_id="member-001",
+        )
+    ] == ["message-001"]
+    responses = inbox.list_unread(team_id="team-001", recipient_member_id="lead-001")
+    assert len(responses) == 1
+    assert responses[0].message_type is TeamMessageType.SHUTDOWN_RESPONSE
+    _, member_messages = decode_inbox(
+        read_json_object(tmp_path / "team-001" / "inboxes" / "member-001.json")
+    )
+    assert member_messages[1].consumed_by_run_id == "protocol-dispatch-shutdown-request-001"

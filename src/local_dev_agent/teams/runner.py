@@ -11,12 +11,14 @@ from .ports import (
     TeamClock,
     TeamIdGenerator,
     TeamInboxRepository,
+    TeamProtocolMessageDispatcher,
     TeamResultReporter,
     TeamSignalRegistry,
     TeamThreadFactory,
     TeamWaiter,
 )
-from .schema import InboxReservation, TeamMember
+from .protocol_routing import TeamProtocolInboxRouter
+from .schema import InboxReservation, TeamMember, TeamMessage
 
 
 logger = logging.getLogger(__name__)
@@ -37,6 +39,7 @@ class TeamMemberRunner:
         signal_registry: TeamSignalRegistry,
         waiter: TeamWaiter,
         thread_factory: TeamThreadFactory,
+        protocol_dispatcher: TeamProtocolMessageDispatcher | None = None,
         batch_size: int = 10,
         check_interval_seconds: float = 1.0,
     ) -> None:
@@ -64,6 +67,10 @@ class TeamMemberRunner:
             raise TypeError("waiter 必须提供 wait 方法。")
         if not callable(getattr(thread_factory, "start", None)):
             raise TypeError("thread_factory 必须提供 start 方法。")
+        if protocol_dispatcher is not None and not callable(
+            getattr(protocol_dispatcher, "dispatch", None)
+        ):
+            raise TypeError("protocol_dispatcher 必须提供 dispatch 方法或为 None。")
         if isinstance(batch_size, bool) or not isinstance(batch_size, int) or batch_size < 1:
             raise ValueError("字段“batch_size”必须是正整数。")
         if (
@@ -81,6 +88,11 @@ class TeamMemberRunner:
         self._signal_registry = signal_registry
         self._waiter = waiter
         self._thread_factory = thread_factory
+        self._protocol_router = (
+            TeamProtocolInboxRouter(dispatcher=protocol_dispatcher)
+            if protocol_dispatcher is not None
+            else None
+        )
         self._batch_size = batch_size
         self._check_interval_seconds = float(check_interval_seconds)
         self._stop_event = Event()
@@ -118,6 +130,58 @@ class TeamMemberRunner:
         )
         if reservation is None:
             return False
+        if self._protocol_router is None:
+            return self._execute_agent_messages(reservation)
+        return self._process_protocol_messages(reservation)
+
+    def _process_protocol_messages(self, reservation: InboxReservation) -> bool:
+        """先消费无需模型参与的协议消息，再把剩余有效消息作为一个子批次交给 Agent。"""
+
+        assert self._protocol_router is not None
+        unprocessed_messages = list(reservation.messages)
+        try:
+            route = self._protocol_router.route(reservation.messages)
+            for message in route.messages_for_system:
+                self._acknowledge_protocol_message(reservation, message)
+                unprocessed_messages.remove(message)
+            for failure in route.failures:
+                logger.warning(
+                    "Team 协议消息校验失败，已确认消费且不会创建 Agent Run。",
+                    extra={
+                        "member_id": self._member.member_id,
+                        "message_id": failure.message.message_id,
+                        "reason": failure.failure_reason,
+                    },
+                )
+            if route.should_stop_member:
+                self._release_messages(reservation, unprocessed_messages)
+                self.stop()
+                return True
+            if not route.messages_for_agent:
+                return True
+            agent_reservation = reservation.subset(route.messages_for_agent)
+            return self._execute_agent_messages(
+                agent_reservation,
+                release_reservation=reservation.subset(tuple(unprocessed_messages)),
+            )
+        except Exception:
+            self._release_messages(reservation, unprocessed_messages)
+            logger.warning(
+                "Team 协议消息处理失败，已释放尚未确认的收件箱消息等待后续重投。",
+                exc_info=True,
+                extra={"member_id": self._member.member_id},
+            )
+            return False
+
+    def _execute_agent_messages(
+        self,
+        reservation: InboxReservation,
+        *,
+        release_reservation: InboxReservation | None = None,
+    ) -> bool:
+        """执行一个已筛选的 Agent 消息子批次；失败只释放尚未确认的消息。"""
+
+        pending_reservation = release_reservation or reservation
         try:
             execution = self._agent_executor.execute(
                 member=self._member,
@@ -138,13 +202,37 @@ class TeamMemberRunner:
             )
             return True
         except Exception:
-            self._release_after_failure(reservation)
+            self._release_after_failure(pending_reservation)
             logger.warning(
                 "Team 成员 Run 失败，已释放收件箱预留消息等待后续重投。",
                 exc_info=True,
                 extra={"member_id": self._member.member_id},
             )
             return False
+
+    def _acknowledge_protocol_message(
+        self,
+        reservation: InboxReservation,
+        message: TeamMessage,
+    ) -> None:
+        """协议处理未创建 Runtime Run，使用稳定消费标识记录已完成的系统动作。"""
+
+        self._inbox_repository.acknowledge(
+            reservation.subset((message,)),
+            consumer_session_id=self._member.session_id,
+            consumer_run_id=f"protocol-dispatch-{message.message_id}",
+            consumed_at=self._clock.now(),
+        )
+
+    def _release_messages(
+        self,
+        reservation: InboxReservation,
+        messages: list[TeamMessage],
+    ) -> None:
+        """仅释放尚未确认的预留子集，避免覆盖已经完成的协议消费。"""
+
+        if messages:
+            self._release_after_failure(reservation.subset(tuple(messages)))
 
     def _release_after_failure(self, reservation: InboxReservation) -> None:
         """优先释放本次预留；释放错误不掩盖原始执行失败的日志上下文。"""

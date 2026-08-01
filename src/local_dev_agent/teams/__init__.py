@@ -21,6 +21,7 @@ from .ports import (
     TeamThreadFactory,
     TeamWaiter,
     TeamProtocolStateRepository,
+    TeamProtocolMessageDispatcher,
 )
 from .lead_runner import TeamLeadInboxRunner
 from .protocol_dispatch import (
@@ -29,6 +30,7 @@ from .protocol_dispatch import (
     TeamProtocolDispatchResult,
 )
 from .protocol_state import TeamProtocolState
+from .protocol_routing import TeamProtocolBatchRoute, TeamProtocolInboxRouter
 from .protocol_types import (
     TeamMessageType,
     TeamProtocolDecision,
@@ -86,9 +88,12 @@ __all__ = [
     "TeamMessageType",
     "TeamPromptExecution",
     "TeamProtocolCoordinator",
+    "TeamProtocolBatchRoute",
     "TeamProtocolDecision",
     "TeamProtocolDispatchDisposition",
     "TeamProtocolDispatchResult",
+    "TeamProtocolInboxRouter",
+    "TeamProtocolMessageDispatcher",
     "TeamProtocolState",
     "TeamProtocolStateRepository",
     "TeamProtocolStatus",
