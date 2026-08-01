@@ -92,6 +92,23 @@ from local_dev_agent.tasks import (
     TaskService,
     UuidTaskIdGenerator,
 )
+from local_dev_agent.teams import (
+    DaemonTeamThreadFactory,
+    EventTeamDispatcher,
+    EventTeamWaiter,
+    JsonFileTeamAssignmentRepository,
+    JsonFileTeamInboxRepository,
+    JsonFileTeamMemberRepository,
+    JsonFileTeamRepository,
+    RuntimeTeamAgentExecutor,
+    SystemTeamClock,
+    TeamMember,
+    TeamMemberRunner,
+    TeamService,
+    TeamThreadFactory,
+    TeamWaiter,
+    UuidTeamIdGenerator,
+)
 from local_dev_agent.todos import JsonFileTodoRepository, TodoReminderPolicy
 from local_dev_agent.tools import ToolRegistry
 from local_dev_agent.tools.builtin import (
@@ -111,6 +128,10 @@ from local_dev_agent.tools.builtin import (
     TaskCreateTool,
     TaskGetTool,
     TaskListTool,
+    AddTeammateTool,
+    AssignTeamWorkTool,
+    CreateTeamTool,
+    SendTeamMessageTool,
     TodoWriteTool,
     WriteFileTool,
 )
@@ -145,6 +166,29 @@ class CliCronCapability:
 
         self.scheduler_runner.stop()
         self.processor_runner.stop()
+
+
+@dataclass(slots=True)
+class CliTeamCapability:
+    """CLI 持有的 Team Runner 集合；成员资格仍由 Team JSON 快照决定。"""
+
+    _create_runner: object
+    _runners: dict[str, TeamMemberRunner]
+
+    def start_member(self, member: TeamMember) -> None:
+        """在成员持久登记完成后启动其唯一进程内 Runner。"""
+
+        if member.member_id in self._runners:
+            raise RuntimeError(f"Team 成员“{member.member_id}”的 Runner 已启动。")
+        runner = self._create_runner(member)  # type: ignore[operator]
+        runner.start()
+        self._runners[member.member_id] = runner
+
+    def stop(self) -> None:
+        """请求停止当前进程启动的全部成员 Runner，不等待线程 join。"""
+
+        for runner in self._runners.values():
+            runner.stop()
 
 
 def execute_prompt(
@@ -320,6 +364,63 @@ def register_cli_cron_capability(
             thread_factory=active_thread_factory,
         ),
     )
+
+
+def register_cli_team_capability(
+    *,
+    workspace: Path,
+    registry: ToolRegistry,
+    repository: StateRepository,
+    loop: MinimalAgentLoop,
+    clock: SystemTeamClock | None = None,
+    waiter: TeamWaiter | None = None,
+    thread_factory: TeamThreadFactory | None = None,
+) -> CliTeamCapability:
+    """装配父 Agent Team 工具和成员 Runner，不让 Team 领域依赖 CLI 或 Runtime 内部。"""
+
+    if not isinstance(workspace, Path):
+        raise TypeError("workspace 必须是 Path 对象。")
+    if not isinstance(registry, ToolRegistry):
+        raise TypeError("registry 必须是 ToolRegistry 对象。")
+    state_root = workspace / "var" / "state" / "teams"
+    dispatcher = EventTeamDispatcher()
+    service = TeamService(
+        team_repository=JsonFileTeamRepository(state_root),
+        member_repository=JsonFileTeamMemberRepository(state_root),
+        assignment_repository=JsonFileTeamAssignmentRepository(state_root),
+        inbox_repository=JsonFileTeamInboxRepository(state_root),
+        id_generator=UuidTeamIdGenerator(),
+        clock=clock if clock is not None else SystemTeamClock(),
+        dispatcher=dispatcher,
+    )
+    executor = RuntimeTeamAgentExecutor(
+        runtime_service=UserInputRuntimeService(repository),
+        loop=loop,
+    )
+    active_clock = clock if clock is not None else SystemTeamClock()
+    active_waiter = waiter if waiter is not None else EventTeamWaiter()
+    active_thread_factory = (
+        thread_factory if thread_factory is not None else DaemonTeamThreadFactory()
+    )
+
+    def create_runner(member: TeamMember) -> TeamMemberRunner:
+        return TeamMemberRunner(
+            member=member,
+            inbox_repository=JsonFileTeamInboxRepository(state_root),
+            agent_executor=executor,
+            id_generator=UuidTeamIdGenerator(),
+            clock=active_clock,
+            signal_registry=dispatcher,
+            waiter=active_waiter,
+            thread_factory=active_thread_factory,
+        )
+
+    capability = CliTeamCapability(create_runner, {})
+    registry.register(CreateTeamTool(service))
+    registry.register(AddTeammateTool(service, on_teammate_added=capability.start_member))
+    registry.register(AssignTeamWorkTool(service))
+    registry.register(SendTeamMessageTool(service))
+    return capability
 
 
 def create_permission_hook_runner(workspace: Path) -> HookRunner:
@@ -511,6 +612,12 @@ def main() -> None:
         output_continuation_policy=create_output_continuation_policy(),
         pending_user_message_source=background_task_notifications,
     )
+    team_capability = register_cli_team_capability(
+        workspace=workspace,
+        registry=tool_registry,
+        repository=repository,
+        loop=loop,
+    )
     cron_capability = register_cli_cron_capability(
         workspace=workspace,
         registry=tool_registry,
@@ -546,6 +653,7 @@ def main() -> None:
             print(result.response.text)
             print()
     finally:
+        team_capability.stop()
         cron_capability.stop()
 
 

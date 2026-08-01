@@ -220,6 +220,7 @@
 - 已完成 `learnClaude/s15_agent_teams` 的第 2 个教学式小步：新增版本化 JSON Team、成员、Assignment 与每成员收件箱仓储，以及只编排领域端口的 `TeamService`。每个快照文件均使用同目录临时文件、`fsync` 与原子替换；收件箱额外以进程内路径锁原子分配接收方 sequence、检查幂等键并执行预留—确认/释放。消息草稿不携带 sequence，只有收件箱可在锁内创建正式消息。恢复仅释放遗留预留、把 `in_progress` 分配标记为 `recovery_pending`，绝不创建或执行 Run。Team、成员、分配和收件箱仍是分别原子写入的快照，当前没有跨实体事务；因此 Assignment 是分配事实，收件箱消息只承担投递提示。尚未注册工具、启动线程或接入 Runtime/CLI，`MinimalAgentLoop`、`runtime/loop.py` 与 `runtime/notifications.py` 仍未修改。
 - 已完成 `learnClaude/s15_agent_teams` 的第 3 个教学式小步：新增待父 Agent 组合根注册的 `create_team`、`add_teammate`、`assign_team_work` 与 `send_team_message` 工具适配器。工具必须携带既有 `ToolExecutionContext`，并把当前 `session_id` 交给 `TeamService` 校验 Lead/发送者身份；参数校验、权限、Pre/Post Hook、工具步骤和 Transcript 仍由既有 `ToolExecutor`/Runtime 链路处理。一次工具调用以 `call_id`（缺失时 `step_id`）派生稳定 Assignment/Message 身份和消息幂等键，重放不会重复投递相同派活。当前只定义工具、不注册 CLI、不启动 Runner；S6 子 Agent 固定四项文件工具白名单以及 `MinimalAgentLoop`、`runtime/loop.py`、`runtime/notifications.py` 均未修改。
 - 已完成 `learnClaude/s15_agent_teams` 的第 4 个教学式小步：新增 `TeamMemberRunner`、进程内 `EventTeamDispatcher`、可替换 Event 等待器和 daemon 线程工厂。Runner 每次只预留一个有界消息批次，调用 `RuntimeTeamAgentExecutor` 通过既有 `UserInputRuntimeService.handle()` 与 `MinimalAgentLoop.execute()` 创建成员的真实独立 Run，成功后确认并记录实际 Session/Run，失败或 Session 不匹配时释放预留；不自动改变 Assignment、S12、Todo、S13 或 S14 状态。停止只设置 Event、不 join，进程退出不承诺继续执行；持久恢复仍由第 2 步的显式恢复语义负责。线程测试使用 Fake Clock、Event 等待器和同步线程工厂，不依赖真实 sleep。Runner 尚未在 CLI 组合根注册，`MinimalAgentLoop`、`runtime/loop.py` 与 `runtime/notifications.py` 未修改。
+- 已完成 `learnClaude/s15_agent_teams` 的第 5 个教学式小步与章节闭环：CLI 组合根新增 Team JSON 仓储、父 Agent 工具、`RuntimeTeamAgentExecutor`、进程内 Dispatcher 与成员 Runner 装配。Team Lead 通过 `create_team` 创建 Team；`add_teammate` 必须绑定一个已存在的独立 Session，登记成功后才为该成员启动 daemon Runner。Team 工具只在父目录注册，S6 子 Agent 固定四项文件工具白名单保持不变；系统提示与 README 已明确 S6 一次性委派、S15 持久成员、S12/Todo/S13/S14 隔离、durable 和进程退出语义。`MinimalAgentLoop`、`runtime/loop.py` 与 `runtime/notifications.py` 均未修改。
 
 ## 验证
 
@@ -228,6 +229,7 @@
 - 本步定向 `python -m pytest tests/unit/teams` 通过（14 passed）；`python -m ruff check src/local_dev_agent/teams tests/unit/teams` 通过。
 - 本步定向 `python -m pytest tests/unit/teams tests/unit/tools/test_team_tools.py` 通过（20 passed）；`python -m ruff check src/local_dev_agent/teams src/local_dev_agent/tools/builtin tests/unit/teams tests/unit/tools/test_team_tools.py` 通过。常规沙箱会被既有 `.pytest-tmp` 清理权限阻断，使用已授权同一 pytest 命令后通过。
 - 本步定向 `python -m pytest tests/unit/teams` 通过（21 passed）；`python -m ruff check src/local_dev_agent/teams tests/unit/teams` 通过。
+- 本章最终定向 `python -m pytest tests/unit/teams tests/unit/tools/test_team_tools.py tests/unit/system_prompt/test_cli.py tests/unit/test_main.py` 通过（57 passed）；完整 `python -m pytest` 通过（759 passed）。完整 `python -m ruff check src tests` 已运行，仅报告本章开始前已有的 `tests/unit/memory/test_consolidation.py:9:59` 单行分号 `E702`；本章相关定向 Ruff 检查通过。
 - 已人工核对 `TDD.md` 与 `AGENT_REQUIREMENTS_CHECKLIST.txt` 的 S01–S30 覆盖关系；本次仅修改文档，未运行代码测试。
 - `python -m pytest`：519 passed（覆盖既有 S1-S10 闭环，以及 S11 瞬态错误契约、纯恢复策略、可注入执行器、SDK 重试收敛、父 Runtime 重试/fallback、S8 共存和 CLI 装配）。
 - `python -m ruff check src tests`：发现 1 个既有错误：`tests/unit/memory/test_consolidation.py:9:59` 的单行分号触发 `E702`；已用 `git show HEAD:...` 确认该行在本步前已存在，新增 S10 文件的定向 Ruff 检查通过。
@@ -259,7 +261,7 @@
 
 ## 下一步
 
-- `learnClaude/s15_agent_teams` 下一步应只完成父 CLI 组合根的 Team 装配与显式启动/停止、父工具注册、系统提示与 README；S6 子 Agent 工具白名单保持不变。章节结束时运行完整 `python -m pytest` 和 `python -m ruff check src tests`，并记录既有失败（如有）。继续禁止修改 `MinimalAgentLoop`、`runtime/loop.py` 与 `runtime/notifications.py`。
+- `learnClaude/s15_agent_teams` 当前范围已完成。后续若扩展，可独立设计成员 Session 自动创建与回收、Lead 收件箱显式消费工具、跨进程文件锁、成员生命周期协议（S16）、结果回报、跨进程调度或更细粒度的 Assignment—消息关联；这些能力不应放宽 S6 子 Agent 白名单，也不应把 Team 业务逻辑堆入 `MinimalAgentLoop`、`runtime/loop.py` 或 `runtime/notifications.py`。
 - `learnClaude/s14_cron_scheduler` 当前范围已完成：后续若扩展，可独立设计跨进程多 Session 协调、durable 文件锁/监视、Trigger 持久化与重试、优先级、时区配置、抖动、任务上限或关机收敛；这些能力不应改变 Scheduler 只入队、Queue Processor 与 Agent 执行解耦、S13 通知端口或 S6 子 Agent 白名单。
 - S13 后台任务当前章节闭环已完成。后续若扩展，可独立设计跨进程持久化、取消/查询工具、并发数量限制、输出 Artifact 或 CLI 退出时的任务收敛；这些能力不应放宽 Session 隔离、权限/Hook 链、S6 子 Agent 白名单或 Runtime 通用通知端口边界。
 - 已完成当前范围的 S8 Context Compact 版本化历史摘要检查点性能优化闭环：完整 Conversation Transcript 始终保持追加式原始历史；检查点独立、版本化、可验证且原子写入，后续模型请求优先使用“检查点摘要 + 原始尾部”，并能从完整历史重建以避免摘要漂移。后续若继续优化，可独立评估 Transcript 的增量存储、检查点校验缓存或更细粒度的重建策略。

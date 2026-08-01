@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 
 from local_dev_agent.teams import Team, TeamAssignment, TeamMember, TeamMessage, TeamService
 
@@ -145,8 +145,16 @@ class CreateTeamTool(Tool):
 class AddTeammateTool(Tool):
     """由当前 Team Lead 为已知 Session 注册持久 Team 成员身份。"""
 
-    def __init__(self, service: TeamService) -> None:
+    def __init__(
+        self,
+        service: TeamService,
+        *,
+        on_teammate_added: Callable[[TeamMember], None] | None = None,
+    ) -> None:
         self._service = _service(service)
+        if on_teammate_added is not None and not callable(on_teammate_added):
+            raise TypeError("on_teammate_added 必须是可调用对象或 None。")
+        self._on_teammate_added = on_teammate_added
         self._definition = ToolDefinition(
             name="add_teammate",
             description="将一个已知会话注册为当前 Team 的持久成员，不启动 Agent。",
@@ -183,6 +191,8 @@ class AddTeammateTool(Tool):
             role=_text(arguments, "role"),
             session_id=_text(arguments, "session_id"),
         )
+        if self._on_teammate_added is not None:
+            self._on_teammate_added(member)
         return _member_data(member)
 
 

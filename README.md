@@ -84,6 +84,14 @@ shell 命令的工作目录固定为 `sandbox/`，并完整经过参数校验、
 文本，因此“读取它的前 20 行”能够引用上一轮已发现的文件。消息历史保存在
 `sandbox/var/state/conversations/`。
 
+## Team 协作
+
+父 Agent 可创建持久 Team、登记成员、派发独立工作分配，并向成员收件箱发送消息。Team、成员身份、工作分配和收件箱快照保存在 `sandbox/var/state/teams/`；每个成员收件箱在接收方范围内维护有序消息、幂等键和预留—确认消费状态。
+
+Team 成员不是 S6 的一次性同步子 Agent：成员需要绑定一个已经存在的独立 Session，登记成功后当前 CLI 进程会为其启动 daemon Runner。Runner 仅在收到消息或定期检查时，通过既有 Runtime 创建该成员的独立 Run；权限、Hook、Transcript、S11 恢复和工具执行边界不被绕过。关闭 CLI 时 Runner 只收到停止请求，不承诺关闭期间自动执行、投递或完成工作；durable 仅表示定义和状态可在下一次进程启动后恢复。
+
+Team 工作分配不替代 S12 项目任务图，Todo 也仍只表示当前 Run 的步骤。S13 后台命令与 S14 Cron 保持独立；它们若要与 Team 协作，必须经明确工具或端口，而不共享内部状态。Team 工具只注册给父 Agent，S6 子 Agent 仍只有四项文件工具。
+
 ## 常用命令
 
 ```powershell

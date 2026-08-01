@@ -43,6 +43,10 @@ CONTEXT_COMPACTION_SYSTEM_PROMPT = """当当前历史已冗余或需要切换任
 
 上下文压缩不会修改完整会话历史；不要把它当作文件或消息编辑工具。"""
 
+TEAM_SYSTEM_PROMPT = """需要长期协作而非一次性同步委派时，可创建 Team、登记拥有独立既有 Session 的成员、派发工作并发送成员消息。
+
+Team 工作分配独立于项目任务图和当前 Run 的 Todo；消息会持久保存在成员收件箱中。成员 Runner 仅在本进程运行期间处理消息，应用关闭期间不会自动执行或完成工作。只向已知且属于同一 Team 的成员派活或发消息。"""
+
 _CLI_SKILL_CATALOG_INSTRUCTION = "需要某项技能的完整说明时，使用已声明的技能加载工具。"
 
 
@@ -127,6 +131,20 @@ def create_cli_system_prompt_assembler(
                 "context_compaction",
                 lambda context: CONTEXT_COMPACTION_SYSTEM_PROMPT
                 if context.has_tool("compact")
+                else None,
+            ),
+            SystemPromptSection(
+                "teams",
+                lambda context: TEAM_SYSTEM_PROMPT
+                if all(
+                    context.has_tool(tool_name)
+                    for tool_name in (
+                        "create_team",
+                        "add_teammate",
+                        "assign_team_work",
+                        "send_team_message",
+                    )
+                )
                 else None,
             ),
             SystemPromptSection(

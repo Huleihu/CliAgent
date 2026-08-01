@@ -22,6 +22,7 @@ from local_dev_agent.main import create_output_continuation_policy
 from local_dev_agent.main import execute_prompt
 from local_dev_agent.main import register_cli_background_task_capability
 from local_dev_agent.main import register_cli_cron_capability
+from local_dev_agent.main import register_cli_team_capability
 from local_dev_agent.models.fake import FakeModel
 from local_dev_agent.models import DeepSeekSettings
 from local_dev_agent.context import ContextInputSnapshot, ContextManager
@@ -388,6 +389,107 @@ class InlineCronThreadFactory:
         self.names.append(name)
         target()
         return object()
+
+
+class StopAfterFirstTeamWait:
+    """让成员 Runner 在首次检查后停止，避免 CLI 组合测试出现真实等待。"""
+
+    def wait(self, *, stop_event: Event, wake_event: Event, timeout_seconds: float) -> bool:
+        stop_event.set()
+        return True
+
+
+class InlineTeamThreadFactory:
+    """同步执行 Team Runner 目标，便于验证成员注册会启动 Runner。"""
+
+    def __init__(self) -> None:
+        self.names: list[str] = []
+
+    def start(self, *, target, name: str) -> object:
+        self.names.append(name)
+        target()
+        return object()
+
+
+def test_cli_team_composition_registers_parent_tools_and_starts_registered_member(
+    tmp_path,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    state_root = workspace / "var" / "state"
+    repository = JsonFileStateRepository(state_root)
+    parent_session = SessionState.create(
+        session_id="session-parent",
+        tenant_id="local",
+        user_id="local",
+        project_id=str(workspace),
+    )
+    child_session = SessionState.create(
+        session_id="session-child",
+        tenant_id="local",
+        user_id="local",
+        project_id=str(workspace),
+    )
+    repository.save_session(parent_session)
+    repository.save_session(child_session)
+    registry = create_tool_registry(workspace)
+    loop = MinimalAgentLoop(
+        repository,
+        FakeModel(ModelResponse.text_completion("成员处理完成。")),
+    )
+    thread_factory = InlineTeamThreadFactory()
+    capability = register_cli_team_capability(
+        workspace=workspace,
+        registry=registry,
+        repository=repository,
+        loop=loop,
+        waiter=StopAfterFirstTeamWait(),
+        thread_factory=thread_factory,  # type: ignore[arg-type]
+    )
+    context = ToolExecutionContext(
+        session_id=parent_session.session_id,
+        run_id="run-parent",
+        step_id="step-parent",
+        call_id="call-parent",
+    )
+
+    created = registry.get("create_team").run(
+        {
+            "workspace_id": str(workspace),
+            "lead_name": "lead",
+            "lead_role": "协调者",
+        },
+        context=context,
+    )
+    team_id = created["team"]["team_id"]  # type: ignore[index]
+    lead_member_id = created["lead"]["member_id"]  # type: ignore[index]
+    registry.get("add_teammate").run(
+        {
+            "team_id": team_id,
+            "lead_member_id": lead_member_id,
+            "name": "alice",
+            "role": "后端开发",
+            "session_id": child_session.session_id,
+        },
+        context=context,
+    )
+
+    assert {
+        "create_team",
+        "add_teammate",
+        "assign_team_work",
+        "send_team_message",
+    }.issubset(definition.name for definition in registry.list_definitions())
+    assert len(thread_factory.names) == 1
+    assert thread_factory.names[0].startswith("team-member-member-")
+    child_registry = SubagentToolRegistryFactory(registry, SubagentPolicy()).create()
+    assert not {
+        "create_team",
+        "add_teammate",
+        "assign_team_work",
+        "send_team_message",
+    }.intersection(definition.name for definition in child_registry.list_definitions())
+    capability.stop()
 
 
 def test_cli_cron_composition_runs_due_prompt_and_keeps_tools_parent_only(tmp_path) -> None:

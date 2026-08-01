@@ -10,6 +10,7 @@ from local_dev_agent.system_prompt import (
     CONTEXT_COMPACTION_SYSTEM_PROMPT,
     TASK_DELEGATION_SYSTEM_PROMPT,
     TASK_SYSTEM_PROMPT,
+    TEAM_SYSTEM_PROMPT,
     TODO_PLANNING_SYSTEM_PROMPT,
     create_cli_system_prompt_assembler,
     create_cli_system_prompt_context,
@@ -87,6 +88,10 @@ def test_cli_assembler_loads_only_guidance_backed_by_registered_tools(tmp_path) 
             "list_crons",
             "cancel_cron",
             "compact",
+            "create_team",
+            "add_teammate",
+            "assign_team_work",
+            "send_team_message",
             "load_skill",
         ),
     )
@@ -102,6 +107,7 @@ def test_cli_assembler_loads_only_guidance_backed_by_registered_tools(tmp_path) 
     assert BACKGROUND_TASK_SYSTEM_PROMPT in prompt
     assert CRON_SCHEDULER_SYSTEM_PROMPT in prompt
     assert CONTEXT_COMPACTION_SYSTEM_PROMPT in prompt
+    assert TEAM_SYSTEM_PROMPT in prompt
     assert "code-review" in prompt
     assert "审查代码中的缺陷。" in prompt
     assert "完整技能正文" not in prompt
@@ -118,6 +124,31 @@ def test_cli_assembler_loads_only_guidance_backed_by_registered_tools(tmp_path) 
     assert "cancel_cron" not in prompt
     assert "compact" not in prompt
     assert "load_skill" not in prompt
+
+
+def test_cli_assembler_requires_all_team_tools_before_loading_guidance(tmp_path) -> None:
+    assembler = create_cli_system_prompt_assembler(_catalog())
+
+    incomplete_prompt = assembler.get(
+        create_cli_system_prompt_context(
+            workspace=tmp_path,
+            registry=_registry("create_team", "add_teammate", "assign_team_work"),
+        )
+    )
+    complete_prompt = assembler.get(
+        create_cli_system_prompt_context(
+            workspace=tmp_path,
+            registry=_registry(
+                "create_team",
+                "add_teammate",
+                "assign_team_work",
+                "send_team_message",
+            ),
+        )
+    )
+
+    assert TEAM_SYSTEM_PROMPT not in incomplete_prompt  # type: ignore[operator]
+    assert TEAM_SYSTEM_PROMPT in complete_prompt  # type: ignore[operator]
 
 
 def test_cli_assembler_skips_unavailable_capability_guidance(tmp_path) -> None:
