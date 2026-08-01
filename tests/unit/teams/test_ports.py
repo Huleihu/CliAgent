@@ -16,6 +16,7 @@ from local_dev_agent.teams import (
     TeamMessageDraft,
     TeamPromptExecution,
     TeamRepository,
+    TeamResultReporter,
 )
 
 
@@ -159,6 +160,11 @@ class FixedAgentExecutor:
         )
 
 
+class RecordingResultReporter:
+    def report(self, *, member, source_messages, execution) -> tuple[TeamMessage, ...]:
+        return ()
+
+
 def test_team_ports_accept_structural_implementations() -> None:
     id_generator: TeamIdGenerator = FixedIdGenerator()
     clock: TeamClock = FixedClock()
@@ -168,6 +174,7 @@ def test_team_ports_accept_structural_implementations() -> None:
     inbox_repository: TeamInboxRepository = InMemoryInboxRepository()
     dispatcher: TeamDispatcher = RecordingDispatcher()
     executor: TeamAgentExecutor = FixedAgentExecutor()
+    result_reporter: TeamResultReporter = RecordingResultReporter()
 
     member = TeamMember.create(
         member_id="member-001",
@@ -203,3 +210,4 @@ def test_team_ports_accept_structural_implementations() -> None:
     dispatcher.signal(member_id=member.member_id)
     assert dispatcher.member_ids == ["member-001"]  # type: ignore[attr-defined]
     assert executor.execute(member=member, prompt="继续处理。").run_id == "run-001"
+    assert result_reporter.report(member=member, source_messages=(), execution=executor.execute(member=member, prompt="继续处理。")) == ()

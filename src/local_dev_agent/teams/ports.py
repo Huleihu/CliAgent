@@ -167,3 +167,16 @@ class TeamAgentExecutor(Protocol):
         prompt: str,
     ) -> TeamPromptExecution:
         """执行一次成员 Run，并返回其 Session、Run 和最终文本。"""
+
+
+class TeamResultReporter(Protocol):
+    """将成员成功 Run 的结果投递给派活者，不负责启动接收方 Run。"""
+
+    def report(
+        self,
+        *,
+        member: TeamMember,
+        source_messages: Sequence[TeamMessage],
+        execution: TeamPromptExecution,
+    ) -> Sequence[TeamMessage]:
+        """持久化本次执行对应的结果消息，并返回已投递的消息。"""

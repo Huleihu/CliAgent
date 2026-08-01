@@ -96,6 +96,7 @@ from local_dev_agent.teams import (
     DaemonTeamThreadFactory,
     EventTeamDispatcher,
     EventTeamWaiter,
+    InboxTeamResultReporter,
     JsonFileTeamAssignmentRepository,
     JsonFileTeamInboxRepository,
     JsonFileTeamMemberRepository,
@@ -402,12 +403,18 @@ def register_cli_team_capability(
     active_thread_factory = (
         thread_factory if thread_factory is not None else DaemonTeamThreadFactory()
     )
+    result_reporter = InboxTeamResultReporter(
+        inbox_repository=JsonFileTeamInboxRepository(state_root),
+        clock=active_clock,
+        dispatcher=dispatcher,
+    )
 
     def create_runner(member: TeamMember) -> TeamMemberRunner:
         return TeamMemberRunner(
             member=member,
             inbox_repository=JsonFileTeamInboxRepository(state_root),
             agent_executor=executor,
+            result_reporter=result_reporter,
             id_generator=UuidTeamIdGenerator(),
             clock=active_clock,
             signal_registry=dispatcher,

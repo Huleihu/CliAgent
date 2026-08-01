@@ -6,6 +6,7 @@ import pytest
 
 from local_dev_agent.teams import (
     EventTeamDispatcher,
+    InboxTeamResultReporter,
     JsonFileTeamInboxRepository,
     TeamMember,
     TeamMemberRunner,
@@ -60,6 +61,13 @@ class RecordingExecutor:
             run_id="run-001",
             response_text="已处理。",
         )
+
+
+class FailingResultReporter:
+    """模拟结果持久化失败，验证原任务消息仍可重投。"""
+
+    def report(self, **_: object) -> tuple[object, ...]:
+        raise RuntimeError("模拟结果回传失败")
 
 
 class StopAfterFirstWait:
@@ -122,16 +130,24 @@ def _runner(
     tmp_path: Path,
     *,
     executor: RecordingExecutor,
+    result_reporter: object | None = None,
     waiter: object | None = None,
     thread_factory: object | None = None,
 ) -> TeamMemberRunner:
+    dispatcher = EventTeamDispatcher()
+    inbox = JsonFileTeamInboxRepository(tmp_path)
     return TeamMemberRunner(
         member=_member(),
-        inbox_repository=JsonFileTeamInboxRepository(tmp_path),
+        inbox_repository=inbox,
         agent_executor=executor,
+        result_reporter=result_reporter or InboxTeamResultReporter(
+            inbox_repository=inbox,
+            clock=AdvancingClock(),
+            dispatcher=dispatcher,
+        ),
         id_generator=SequenceIdGenerator(),
         clock=AdvancingClock(),
-        signal_registry=EventTeamDispatcher(),
+        signal_registry=dispatcher,
         waiter=waiter or StopAfterFirstWait(),  # type: ignore[arg-type]
         thread_factory=thread_factory or InlineThreadFactory(),  # type: ignore[arg-type]
     )
@@ -148,6 +164,11 @@ def test_runner_reserves_executes_and_acknowledges_messages_only_after_runtime_s
 
     assert executor.prompts == ["[Team 收件箱]\n#1 来自 lead-001（assignment）：检查数据库迁移。"]
     assert inbox.list_unread(team_id="team-001", recipient_member_id="member-001") == ()
+    reports = inbox.list_unread(team_id="team-001", recipient_member_id="lead-001")
+    assert len(reports) == 1
+    assert reports[0].message_type is TeamMessageType.RESULT
+    assert reports[0].sender_member_id == "member-001"
+    assert reports[0].content.endswith("已处理。")
     _, messages = decode_inbox(
         read_json_object(tmp_path / "team-001" / "inboxes" / "member-001.json")
     )
@@ -172,6 +193,11 @@ def test_runner_releases_reserved_messages_when_runtime_fails(
             member=_member(),
             inbox_repository=inbox,
             agent_executor=RecordingExecutor(),
+            result_reporter=InboxTeamResultReporter(
+                inbox_repository=inbox,
+                clock=AdvancingClock(),
+                dispatcher=EventTeamDispatcher(),
+            ),
             id_generator=SequenceIdGenerator(),
             clock=AdvancingClock(),
             signal_registry=EventTeamDispatcher(),
@@ -179,6 +205,27 @@ def test_runner_releases_reserved_messages_when_runtime_fails(
             thread_factory=InlineThreadFactory(),  # type: ignore[arg-type]
             batch_size=0,
         )
+
+
+def test_runner_releases_assignment_when_result_reporting_fails(tmp_path: Path) -> None:
+    inbox = JsonFileTeamInboxRepository(tmp_path)
+    _send(inbox)
+
+    assert (
+        _runner(
+            tmp_path,
+            executor=RecordingExecutor(),
+            result_reporter=FailingResultReporter(),
+        ).process_once()
+        is False
+    )
+    assert [
+        message.message_id
+        for message in inbox.list_unread(
+            team_id="team-001",
+            recipient_member_id="member-001",
+        )
+    ] == ["message-001"]
 
 
 def test_runner_and_dispatcher_use_injected_event_waiter_and_thread_factory(
@@ -194,6 +241,11 @@ def test_runner_and_dispatcher_use_injected_event_waiter_and_thread_factory(
         member=_member(),
         inbox_repository=inbox,
         agent_executor=executor,
+        result_reporter=InboxTeamResultReporter(
+            inbox_repository=inbox,
+            clock=AdvancingClock(),
+            dispatcher=dispatcher,
+        ),
         id_generator=SequenceIdGenerator(),
         clock=AdvancingClock(),
         signal_registry=dispatcher,

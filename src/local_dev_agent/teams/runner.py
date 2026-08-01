@@ -10,6 +10,7 @@ from .ports import (
     TeamClock,
     TeamIdGenerator,
     TeamInboxRepository,
+    TeamResultReporter,
     TeamSignalRegistry,
     TeamThreadFactory,
     TeamWaiter,
@@ -29,6 +30,7 @@ class TeamMemberRunner:
         member: TeamMember,
         inbox_repository: TeamInboxRepository,
         agent_executor: TeamAgentExecutor,
+        result_reporter: TeamResultReporter,
         id_generator: TeamIdGenerator,
         clock: TeamClock,
         signal_registry: TeamSignalRegistry,
@@ -46,6 +48,8 @@ class TeamMemberRunner:
             raise TypeError("inbox_repository 必须提供预留、确认和释放方法。")
         if not callable(getattr(agent_executor, "execute", None)):
             raise TypeError("agent_executor 必须提供 execute 方法。")
+        if not callable(getattr(result_reporter, "report", None)):
+            raise TypeError("result_reporter 必须提供 report 方法。")
         if not callable(getattr(id_generator, "new_id", None)):
             raise TypeError("id_generator 必须提供 new_id 方法。")
         if not callable(getattr(clock, "now", None)):
@@ -70,6 +74,7 @@ class TeamMemberRunner:
         self._member = member
         self._inbox_repository = inbox_repository
         self._agent_executor = agent_executor
+        self._result_reporter = result_reporter
         self._id_generator = id_generator
         self._clock = clock
         self._signal_registry = signal_registry
@@ -119,6 +124,11 @@ class TeamMemberRunner:
             )
             if execution.session_id != self._member.session_id:
                 raise ValueError("Team Agent 执行结果不属于该成员的 Session。")
+            self._result_reporter.report(
+                member=self._member,
+                source_messages=reservation.messages,
+                execution=execution,
+            )
             self._inbox_repository.acknowledge(
                 reservation,
                 consumer_session_id=execution.session_id,

@@ -14,10 +14,12 @@ from .ports import (
     TeamInboxRepository,
     TeamMemberRepository,
     TeamRepository,
+    TeamResultReporter,
     TeamSignalRegistry,
     TeamThreadFactory,
     TeamWaiter,
 )
+from .result_reporter import InboxTeamResultReporter
 from .runner import TeamMemberRunner
 from .runtime_adapter import RuntimeTeamAgentExecutor
 from .schema import (
@@ -39,6 +41,7 @@ from .threading import DaemonTeamThreadFactory, EventTeamDispatcher, EventTeamWa
 
 __all__ = [
     "InboxReservation",
+    "InboxTeamResultReporter",
     "DaemonTeamThreadFactory",
     "EventTeamDispatcher",
     "EventTeamWaiter",
@@ -65,6 +68,7 @@ __all__ = [
     "TeamMessageType",
     "TeamPromptExecution",
     "TeamRepository",
+    "TeamResultReporter",
     "TeamRecoveryResult",
     "RuntimeTeamAgentExecutor",
     "TeamMemberRunner",
