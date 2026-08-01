@@ -1,7 +1,8 @@
 """Team 领域与文件、线程和 Runtime 适配器之间的稳定端口。"""
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from datetime import datetime
+from threading import Event, Thread
 from typing import Protocol
 
 from .schema import (
@@ -124,6 +125,36 @@ class TeamDispatcher(Protocol):
 
     def signal(self, *, member_id: str) -> None:
         """提示指定成员对应的 worker 尽快检查持久状态。"""
+
+
+class TeamSignalRegistry(Protocol):
+    """供进程内 Runner 注册唤醒 Event 的瞬时端口，不属于 durable Team 状态。"""
+
+    def register(self, *, member_id: str) -> Event:
+        """返回指定成员唯一的进程内唤醒事件。"""
+
+    def unregister(self, *, member_id: str, wake_event: Event) -> None:
+        """仅移除仍由当前 Runner 持有的唤醒事件。"""
+
+
+class TeamWaiter(Protocol):
+    """隔离 Runner 的 Event 等待，避免单元测试依赖真实 sleep。"""
+
+    def wait(
+        self,
+        *,
+        stop_event: Event,
+        wake_event: Event,
+        timeout_seconds: float,
+    ) -> bool:
+        """等待唤醒、超时或停止；返回 True 表示 Runner 应结束。"""
+
+
+class TeamThreadFactory(Protocol):
+    """隔离 daemon 线程创建，允许测试同步接管 Runner 的循环目标。"""
+
+    def start(self, *, target: Callable[[], None], name: str) -> Thread:
+        """启动命名线程并返回其句柄。"""
 
 
 class TeamAgentExecutor(Protocol):
