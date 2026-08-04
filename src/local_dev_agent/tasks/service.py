@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from typing import Protocol
 
 from .errors import TaskNotFoundError
-from .ports import TaskIdGenerator, TaskRepository
+from .ports import AutonomousTaskBoard, TaskIdGenerator, TaskRepository
 from .rules import can_claim_task, claim_task as apply_claim, complete_task as apply_complete
 from .schema import Task, TaskStatus
 
@@ -55,15 +55,17 @@ class TaskApplicationService(Protocol):
         """完成指定任务并返回本次解锁结果。"""
 
 
-class TaskService:
+class TaskService(AutonomousTaskBoard):
     """提供创建、查询、认领和完成任务的无界面应用用例。"""
 
     def __init__(self, repository: TaskRepository, id_generator: TaskIdGenerator) -> None:
         if not all(
             callable(getattr(repository, method_name, None))
-            for method_name in ("add", "get", "list", "replace")
+            for method_name in ("add", "get", "list", "replace", "compare_and_replace")
         ):
-            raise TypeError("任务仓储必须提供 add、get、list 和 replace 方法。")
+            raise TypeError(
+                "任务仓储必须提供 add、get、list、replace 和 compare_and_replace 方法。"
+            )
         if not callable(getattr(id_generator, "new_task_id", None)):
             raise TypeError("任务标识生成器必须提供 new_task_id 方法。")
         self._repository = repository
@@ -105,15 +107,47 @@ class TaskService:
         return task
 
     def claim_task(self, *, task_id: str, owner: str) -> Task:
-        """读取依赖快照、应用认领规则并持久化新的任务状态。"""
+        """以比较并替换持久化指定认领，竞争失败后按最新快照重新判定规则。"""
 
-        task = self.get_task(task_id)
-        claimed_task = apply_claim(
-            task,
-            owner=owner,
-            dependencies=self._dependency_snapshot(task),
+        self._require_owner(owner)
+        while True:
+            task = self.get_task(task_id)
+            claimed_task = apply_claim(
+                task,
+                owner=owner,
+                dependencies=self._dependency_snapshot(task),
+            )
+            if self._repository.compare_and_replace(
+                expected=task,
+                replacement=claimed_task,
+            ):
+                return claimed_task
+
+    def list_claimable_tasks(self) -> tuple[Task, ...]:
+        """返回所有可认领任务，保留仓储提供的稳定顺序供成员公平竞争。"""
+
+        return tuple(
+            task
+            for task in self.list_tasks()
+            if can_claim_task(task, self._dependency_snapshot(task))
         )
-        return self._repository.replace(claimed_task)
+
+    def claim_next_task(self, *, owner: str) -> Task | None:
+        """逐项比较并替换候选快照，竞争失败时继续尝试下一项任务。"""
+
+        self._require_owner(owner)
+        for task in self.list_claimable_tasks():
+            claimed_task = apply_claim(
+                task,
+                owner=owner,
+                dependencies=self._dependency_snapshot(task),
+            )
+            if self._repository.compare_and_replace(
+                expected=task,
+                replacement=claimed_task,
+            ):
+                return claimed_task
+        return None
 
     def complete_task(self, *, task_id: str) -> TaskCompletion:
         """完成任务后重查待认领下游任务，并返回本次新解锁集合。"""
@@ -158,3 +192,10 @@ class TaskService:
                     raise TypeError("任务仓储必须返回 Task 对象或空值。")
                 dependencies[dependency_id] = dependency
         return dependencies
+
+    @staticmethod
+    def _require_owner(owner: str) -> None:
+        """在没有候选任务时也校验成员标识，保持自主接口的输入边界一致。"""
+
+        if not isinstance(owner, str) or not owner.strip():
+            raise ValueError("字段“owner”必须是非空字符串。")

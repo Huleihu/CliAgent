@@ -31,6 +31,12 @@ class InMemoryTaskRepository:
         self._tasks[task.task_id] = task
         return task
 
+    def compare_and_replace(self, *, expected: Task, replacement: Task) -> bool:
+        if self._tasks.get(expected.task_id) != expected:
+            return False
+        self._tasks[replacement.task_id] = replacement
+        return True
+
 
 class SequenceTaskIdGenerator:
     """按预设顺序生成标识，避免服务测试依赖随机性。"""
@@ -110,6 +116,100 @@ def test_claim_task_treats_a_missing_dependency_as_blocked() -> None:
 
     with pytest.raises(TaskBlockedError, match="task-schema"):
         _service(api_task).claim_task(task_id="task-api", owner="agent-api")
+
+
+def test_list_claimable_tasks_skips_blocked_and_already_claimed_tasks() -> None:
+    completed_task = _completed_task("task-completed")
+    ready_task = Task.create(task_id="task-ready", subject="可直接认领。")
+    unblocked_task = Task.create(
+        task_id="task-unblocked",
+        subject="依赖已完成。",
+        blocked_by=("task-completed",),
+    )
+    blocked_task = Task.create(
+        task_id="task-blocked",
+        subject="依赖未完成。",
+        blocked_by=("task-missing",),
+    )
+    claimed_task = Task(
+        task_id="task-claimed",
+        subject="已被认领。",
+        description="",
+        status=TaskStatus.IN_PROGRESS,
+        owner="agent-a",
+    )
+
+    service = _service(
+        completed_task,
+        ready_task,
+        unblocked_task,
+        blocked_task,
+        claimed_task,
+    )
+
+    assert tuple(task.task_id for task in service.list_claimable_tasks()) == (
+        "task-ready",
+        "task-unblocked",
+    )
+
+
+def test_claim_next_task_uses_stable_candidate_order_and_persists_owner() -> None:
+    task_b = Task.create(task_id="task-b", subject="任务 B。")
+    task_a = Task.create(task_id="task-a", subject="任务 A。")
+    service = _service(task_b, task_a)
+
+    claimed = service.claim_next_task(owner="agent-a")
+
+    assert claimed is not None
+    assert claimed.task_id == "task-a"
+    assert claimed.status is TaskStatus.IN_PROGRESS
+    assert claimed.owner == "agent-a"
+    assert service.get_task("task-a") == claimed
+
+
+def test_claim_next_task_returns_none_when_no_task_is_claimable() -> None:
+    blocked_task = Task.create(
+        task_id="task-blocked",
+        subject="依赖未完成。",
+        blocked_by=("task-missing",),
+    )
+
+    assert _service(blocked_task).claim_next_task(owner="agent-a") is None
+
+
+def test_claim_next_task_continues_after_a_competing_claim() -> None:
+    class CompetingTaskRepository(InMemoryTaskRepository):
+        def __init__(self, tasks: tuple[Task, ...]) -> None:
+            super().__init__(tasks)
+            self._rejected_task_ids = {"task-a"}
+
+        def compare_and_replace(self, *, expected: Task, replacement: Task) -> bool:
+            if expected.task_id in self._rejected_task_ids:
+                self._rejected_task_ids.remove(expected.task_id)
+                self._tasks[expected.task_id] = Task(
+                    task_id=expected.task_id,
+                    subject=expected.subject,
+                    description=expected.description,
+                    status=TaskStatus.IN_PROGRESS,
+                    owner="agent-other",
+                    blocked_by=expected.blocked_by,
+                )
+                return False
+            return super().compare_and_replace(expected=expected, replacement=replacement)
+
+    repository = CompetingTaskRepository(
+        (
+            Task.create(task_id="task-a", subject="任务 A。"),
+            Task.create(task_id="task-b", subject="任务 B。"),
+        )
+    )
+    service = TaskService(repository, SequenceTaskIdGenerator())
+
+    claimed = service.claim_next_task(owner="agent-a")
+
+    assert claimed is not None
+    assert claimed.task_id == "task-b"
+    assert repository.get("task-a").owner == "agent-other"
 
 
 def test_complete_task_reports_only_downstream_tasks_newly_unblocked_by_completion() -> None:

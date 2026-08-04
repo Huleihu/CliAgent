@@ -34,6 +34,12 @@ class InMemoryTaskRepository:
         self._tasks[task.task_id] = task
         return task
 
+    def compare_and_replace(self, *, expected: Task, replacement: Task) -> bool:
+        if self._tasks.get(expected.task_id) != expected:
+            return False
+        self._tasks[replacement.task_id] = replacement
+        return True
+
 
 class SequenceTaskIdGenerator:
     """用稳定任务标识让工具测试可读且可重复。"""

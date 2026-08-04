@@ -11,7 +11,7 @@ from .errors import (
 )
 from .json_repository import JsonFileTaskRepository
 from .identifiers import UuidTaskIdGenerator
-from .ports import TaskIdGenerator, TaskRepository
+from .ports import AutonomousTaskBoard, TaskIdGenerator, TaskRepository
 from .rules import can_claim_task, claim_task, complete_task, unresolved_dependency_ids
 from .schema import Task, TaskStatus
 from .service import TaskApplicationService, TaskCompletion, TaskService
@@ -19,6 +19,7 @@ from .service import TaskApplicationService, TaskCompletion, TaskService
 __all__ = [
     "Task",
     "TaskAlreadyExistsError",
+    "AutonomousTaskBoard",
     "TaskApplicationService",
     "TaskBlockedError",
     "TaskCompletion",

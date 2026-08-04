@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 from tempfile import NamedTemporaryFile
+from threading import Lock, RLock
 
 from .errors import (
     CorruptedTaskFileError,
@@ -16,6 +17,18 @@ from .json_codec import decode_task, encode_task
 from .schema import Task
 
 
+_TASK_LOCKS_GUARD = Lock()
+_TASK_LOCKS: dict[Path, RLock] = {}
+
+
+def _lock_for(root_directory: Path) -> RLock:
+    """让指向同一目录的仓储实例共享锁，避免进程内读判写竞争。"""
+
+    resolved_directory = root_directory.resolve()
+    with _TASK_LOCKS_GUARD:
+        return _TASK_LOCKS.setdefault(resolved_directory, RLock())
+
+
 class JsonFileTaskRepository:
     """将每个任务保存为独立、可恢复且原子替换的 JSON 文件。"""
 
@@ -23,14 +36,16 @@ class JsonFileTaskRepository:
         if not isinstance(root_directory, Path):
             raise TypeError("任务仓储根目录必须是 Path 对象。")
         self._root_directory = root_directory
+        self._lock = _lock_for(root_directory)
 
     def add(self, task: Task) -> Task:
         """新增任务文件，拒绝无锁首版中可检测到的同标识重复创建。"""
 
         path = self._path_for(task.task_id)
-        if path.exists():
-            raise TaskAlreadyExistsError(task_id=task.task_id)
-        self._write_json_atomically(path, encode_task(task))
+        with self._lock:
+            if path.exists():
+                raise TaskAlreadyExistsError(task_id=task.task_id)
+            self._write_json_atomically(path, encode_task(task))
         return task
 
     def get(self, task_id: str) -> Task | None:
@@ -55,10 +70,28 @@ class JsonFileTaskRepository:
         """原子替换已有任务，避免状态转换意外创建新任务。"""
 
         path = self._path_for(task.task_id)
-        if not path.exists():
-            raise TaskNotFoundError(task_id=task.task_id)
-        self._write_json_atomically(path, encode_task(task))
+        with self._lock:
+            if not path.exists():
+                raise TaskNotFoundError(task_id=task.task_id)
+            self._write_json_atomically(path, encode_task(task))
         return task
+
+    def compare_and_replace(self, *, expected: Task, replacement: Task) -> bool:
+        """在同一进程内原子比较并替换任务快照，供并发认领竞争使用。"""
+
+        if not isinstance(expected, Task) or not isinstance(replacement, Task):
+            raise TypeError("expected 和 replacement 必须都是 Task 对象。")
+        if expected.task_id != replacement.task_id:
+            raise ValueError("比较并替换的两个任务必须具有相同标识。")
+
+        path = self._path_for(expected.task_id)
+        with self._lock:
+            if not path.exists():
+                return False
+            if self._read_task(path, expected_task_id=expected.task_id) != expected:
+                return False
+            self._write_json_atomically(path, encode_task(replacement))
+            return True
 
     def _read_task(self, path: Path, *, expected_task_id: str) -> Task:
         """将文件、信封和任务标识错误收束为仓储诊断错误。"""

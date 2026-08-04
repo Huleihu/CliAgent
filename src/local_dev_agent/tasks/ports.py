@@ -21,6 +21,19 @@ class TaskRepository(Protocol):
     def replace(self, task: Task) -> Task:
         """以新的完整快照替换已有任务。"""
 
+    def compare_and_replace(self, *, expected: Task, replacement: Task) -> bool:
+        """仅当当前快照仍等于 expected 时替换，成功时返回真。"""
+
+
+class AutonomousTaskBoard(Protocol):
+    """供自主成员发现并安全认领任务的只需端口。"""
+
+    def list_claimable_tasks(self) -> tuple[Task, ...]:
+        """返回当前依赖已满足且尚未认领的稳定候选快照。"""
+
+    def claim_next_task(self, *, owner: str) -> Task | None:
+        """按稳定候选顺序尝试认领一项任务，无可认领任务时返回空值。"""
+
 
 class TaskIdGenerator(Protocol):
     """为新建任务提供可替换且无需仓储参与的稳定标识。"""

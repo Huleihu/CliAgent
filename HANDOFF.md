@@ -2,6 +2,8 @@
 
 > 讲解偏好更新（未提交）：`AGENTS.md` 新增“代码讲解偏好”。后续解释调用链、异步协作、消息路由和运行时流程时，应以真实请求的时间顺序和最小数据流图为主线，明确各层职责、自动行为与显式工具调用，并使用具体消息示例说明分流。未执行测试：仅修改协作说明文档。
 
+> S17 第 1 步（未提交）：S12 任务图新增窄的 `AutonomousTaskBoard` 公共端口，`TaskService` 可稳定列出依赖已满足的候选任务，并以 `claim_next_task(owner)` 逐项尝试认领。`TaskRepository` 新增比较并替换契约；JSON 适配器按解析后的任务根目录共享进程内可重入锁，使“读取 pending 快照 → 比较当前快照 → 写入 in_progress/owner”成为一个临界区。两个成员同时发现同一任务时，至多一人认领成功；竞争失败的成员会继续尝试下一候选任务。既有 `task_claim` 也改为使用同一比较并替换边界，避免显式认领绕开竞争保护。当前保证只覆盖同一 Python 进程，尚未实现跨进程文件锁；未修改 Team、`MinimalAgentLoop`、`runtime/loop.py` 或 `runtime/notifications.py`。验证：任务领域和工具定向 pytest 74 passed、扩展 S12/S15/S16/CLI 回归 144 passed，定向 Ruff 通过。下一步应定义 Team 自主工作端口与 S12 适配器，仍不接入 Member Runner。
+
 > S16 关闭协议工具步（未提交）：新增父侧 `request_team_shutdown` 工具和 `TeamService.request_shutdown()` 应用入口。工具以当前 `ToolExecutionContext` 绑定 Lead Session，并以稳定 `call_id` 生成 `request_id`；应用服务校验 Team、Lead 身份、目标成员和“不能关闭 Lead”边界，委托协议请求发送端口持久化 `SHUTDOWN_REQUEST` 并唤醒目标成员。CLI 已注册此工具，端到端测试确认 `Lead 工具 → shutdown request → Member 自动 approved response/停止 → Lead 状态 approved`，全过程不创建协议专用 Runtime Run。`plan_approval_request` 与 `plan_approval_response` 工具按当前决定暂不实现。验证：定向 41 passed、Ruff 通过。下一步只在需要时独立设计计划审批工具；当前 S16 shutdown 闭环已可由用户发起。
 
 > S16 第 5 步（未提交）：CLI 组合根现在使用同一个 Team 时钟、收件箱 JSON 仓储、协议状态 JSON 仓储和 `TeamProtocolCoordinator`，并将协调器注入新建的 Member 与 Lead Runner。既有 `TeamService` 和四个 S15 工具保持原语义，普通 `ASSIGNMENT → RESULT → Lead Run` 回归仍通过。此步仅完成装配：当前 CLI 尚没有发起 shutdown、发起计划审批或提交审批回应的工具，因而用户还不能从模型侧主动创建协议请求；下一教学步应设计这些受控工具及其应用服务入口。验证：CLI 组合与 Team 回归 66 passed，定向 Ruff 通过；未修改 `MinimalAgentLoop`、`runtime/loop.py` 或 `runtime/notifications.py`。

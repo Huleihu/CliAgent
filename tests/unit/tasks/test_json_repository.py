@@ -1,4 +1,6 @@
 import json
+from concurrent.futures import ThreadPoolExecutor
+from threading import Barrier
 
 import pytest
 
@@ -67,6 +69,78 @@ def test_repository_replace_rejects_a_missing_task(tmp_path) -> None:
 
     with pytest.raises(TaskNotFoundError, match="task-1.*不存在"):
         repository.replace(_pending_task("task-1"))
+
+
+def test_repository_compare_and_replace_only_updates_the_expected_snapshot(tmp_path) -> None:
+    repository = JsonFileTaskRepository(tmp_path / "tasks")
+    pending = _pending_task("task-1")
+    replacement = _in_progress_task("task-1")
+    repository.add(pending)
+
+    assert repository.compare_and_replace(expected=pending, replacement=replacement) is True
+    assert repository.compare_and_replace(expected=pending, replacement=pending) is False
+    assert repository.get("task-1") == replacement
+
+
+def test_repository_shares_a_lock_between_instances_for_competing_claims(tmp_path) -> None:
+    from local_dev_agent.tasks import TaskService
+
+    class SynchronizedRepository:
+        def __init__(self, repository: JsonFileTaskRepository, barrier: Barrier) -> None:
+            self._repository = repository
+            self._barrier = barrier
+
+        def add(self, task: Task) -> Task:
+            return self._repository.add(task)
+
+        def get(self, task_id: str) -> Task | None:
+            return self._repository.get(task_id)
+
+        def list(self) -> tuple[Task, ...]:
+            tasks = self._repository.list()
+            self._barrier.wait(timeout=2)
+            return tasks
+
+        def replace(self, task: Task) -> Task:
+            return self._repository.replace(task)
+
+        def compare_and_replace(self, *, expected: Task, replacement: Task) -> bool:
+            return self._repository.compare_and_replace(
+                expected=expected,
+                replacement=replacement,
+            )
+
+    class FixedTaskIdGenerator:
+        def new_task_id(self) -> str:
+            return "unused"
+
+    root_directory = tmp_path / "tasks"
+    JsonFileTaskRepository(root_directory).add(_pending_task("task-1"))
+    barrier = Barrier(2)
+    service_a = TaskService(
+        SynchronizedRepository(JsonFileTaskRepository(root_directory), barrier),
+        FixedTaskIdGenerator(),
+    )
+    service_b = TaskService(
+        SynchronizedRepository(JsonFileTaskRepository(root_directory), barrier),
+        FixedTaskIdGenerator(),
+    )
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        results = tuple(
+            executor.map(
+                lambda service_owner: service_owner[0].claim_next_task(
+                    owner=service_owner[1]
+                ),
+                ((service_a, "agent-a"), (service_b, "agent-b")),
+            )
+        )
+
+    claimed = tuple(task for task in results if task is not None)
+    assert len(claimed) == 1
+    assert claimed[0].task_id == "task-1"
+    assert claimed[0].owner in {"agent-a", "agent-b"}
+    assert JsonFileTaskRepository(root_directory).get("task-1") == claimed[0]
 
 
 def test_repository_lists_tasks_by_stable_file_name_order(tmp_path) -> None:
