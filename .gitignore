@@ -38,3 +38,6 @@ pytest-cache-files-*/
 # Local runtime state
 var/
 sandbox/
+
+# Git 工作树目录
+.worktrees/
