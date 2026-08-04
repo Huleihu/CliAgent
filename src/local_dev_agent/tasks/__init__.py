@@ -11,7 +11,7 @@ from .errors import (
 )
 from .json_repository import JsonFileTaskRepository
 from .identifiers import UuidTaskIdGenerator
-from .ports import AutonomousTaskBoard, TaskIdGenerator, TaskRepository
+from .ports import AutonomousTaskBoard, TaskIdGenerator, TaskRepository, TaskSnapshotReader
 from .rules import can_claim_task, claim_task, complete_task, unresolved_dependency_ids
 from .schema import Task, TaskStatus
 from .service import TaskApplicationService, TaskCompletion, TaskService
@@ -28,6 +28,7 @@ __all__ = [
     "TaskRepository",
     "TaskRepositoryError",
     "TaskRuleViolationError",
+    "TaskSnapshotReader",
     "TaskStateTransitionError",
     "TaskStatus",
     "CorruptedTaskFileError",

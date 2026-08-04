@@ -1,6 +1,7 @@
 """S15 Team 协作的领域契约、持久化适配器与应用服务。"""
 
 from .clock import SystemTeamClock
+from .autonomous_result_reporter import InboxTeamAutonomousResultReporter
 from .identifiers import UuidTeamIdGenerator
 from .json_assignment_repository import JsonFileTeamAssignmentRepository
 from .json_inbox_repository import JsonFileTeamInboxRepository
@@ -10,6 +11,7 @@ from .ports import (
     TeamAgentExecutor,
     TeamAutonomousResultReporter,
     TeamAutonomousWorkSource,
+    TeamAutonomousWorkVerifier,
     TeamAssignmentRepository,
     TeamClock,
     TeamDispatcher,
@@ -45,6 +47,7 @@ from .result_reporter import InboxTeamResultReporter
 from .runner import TeamMemberRunner
 from .runtime_adapter import RuntimeTeamAgentExecutor
 from .task_board_work_source import TaskBoardTeamAutonomousWorkSource
+from .task_board_work_verifier import TaskBoardTeamAutonomousWorkVerifier
 from .schema import (
     InboxReservation,
     Team,
@@ -65,6 +68,7 @@ from .threading import DaemonTeamThreadFactory, EventTeamDispatcher, EventTeamWa
 
 __all__ = [
     "InboxReservation",
+    "InboxTeamAutonomousResultReporter",
     "InboxTeamResultReporter",
     "DaemonTeamThreadFactory",
     "EventTeamDispatcher",
@@ -81,6 +85,7 @@ __all__ = [
     "TeamAutonomousWorkItem",
     "TeamAutonomousWorkOutcome",
     "TeamAutonomousWorkSource",
+    "TeamAutonomousWorkVerifier",
     "TeamAssignment",
     "TeamAssignmentRepository",
     "TeamAssignmentStatus",
@@ -121,6 +126,7 @@ __all__ = [
     "TeamStatus",
     "TeamThreadFactory",
     "TaskBoardTeamAutonomousWorkSource",
+    "TaskBoardTeamAutonomousWorkVerifier",
     "TeamWaiter",
     "UuidTeamIdGenerator",
 ]

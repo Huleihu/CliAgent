@@ -1,4 +1,9 @@
-from local_dev_agent.tasks import AutonomousTaskBoard, Task, TaskRepository
+from local_dev_agent.tasks import (
+    AutonomousTaskBoard,
+    Task,
+    TaskRepository,
+    TaskSnapshotReader,
+)
 
 
 def test_task_repository_port_accepts_a_structural_implementation() -> None:
@@ -48,3 +53,16 @@ def test_autonomous_task_board_port_accepts_a_structural_implementation() -> Non
 
     assert board.list_claimable_tasks() == (task,)
     assert board.claim_next_task(owner="agent-a") is task
+
+
+def test_task_snapshot_reader_port_accepts_a_structural_implementation() -> None:
+    task = Task.create(task_id="task-1", subject="读取任务快照。")
+
+    class FakeTaskSnapshotReader:
+        def get_task(self, task_id: str) -> Task:
+            assert task_id == "task-1"
+            return task
+
+    reader: TaskSnapshotReader = FakeTaskSnapshotReader()
+
+    assert reader.get_task("task-1") is task

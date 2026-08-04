@@ -35,6 +35,13 @@ class AutonomousTaskBoard(Protocol):
         """按稳定候选顺序尝试认领一项任务，无可认领任务时返回空值。"""
 
 
+class TaskSnapshotReader(Protocol):
+    """为其他领域提供任务事实读取，不暴露创建或状态修改能力。"""
+
+    def get_task(self, task_id: str) -> Task:
+        """读取指定任务的当前快照；不存在时由实现报告领域错误。"""
+
+
 class TaskIdGenerator(Protocol):
     """为新建任务提供可替换且无需仓储参与的稳定标识。"""
 

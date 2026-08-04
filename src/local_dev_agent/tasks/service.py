@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from typing import Protocol
 
 from .errors import TaskNotFoundError
-from .ports import AutonomousTaskBoard, TaskIdGenerator, TaskRepository
+from .ports import AutonomousTaskBoard, TaskIdGenerator, TaskRepository, TaskSnapshotReader
 from .rules import can_claim_task, claim_task as apply_claim, complete_task as apply_complete
 from .schema import Task, TaskStatus
 
@@ -55,7 +55,7 @@ class TaskApplicationService(Protocol):
         """完成指定任务并返回本次解锁结果。"""
 
 
-class TaskService(AutonomousTaskBoard):
+class TaskService(AutonomousTaskBoard, TaskSnapshotReader):
     """提供创建、查询、认领和完成任务的无界面应用用例。"""
 
     def __init__(self, repository: TaskRepository, id_generator: TaskIdGenerator) -> None:

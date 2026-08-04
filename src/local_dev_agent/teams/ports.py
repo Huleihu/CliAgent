@@ -234,6 +234,19 @@ class TeamAutonomousWorkSource(Protocol):
         """成功认领时返回工作项；没有可认领任务时返回空值。"""
 
 
+class TeamAutonomousWorkVerifier(Protocol):
+    """根据 S12 持久任务状态核验一次自主 Run，而不信任自由文本。"""
+
+    def verify(
+        self,
+        *,
+        member: TeamMember,
+        work_item: TeamAutonomousWorkItem,
+        execution: TeamPromptExecution | None,
+    ) -> TeamAutonomousWorkOutcome:
+        """返回完成或失败结论；execution 为空表示成员 Run 未成功结束。"""
+
+
 class TeamResultReporter(Protocol):
     """将成员成功 Run 的结果投递给派活者，不负责启动接收方 Run。"""
 

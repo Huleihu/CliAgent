@@ -12,6 +12,7 @@ from local_dev_agent.teams import (
     TeamMember,
     TeamMemberRunner,
     TeamAutonomousWorkItem,
+    TeamAutonomousWorkOutcome,
     TeamMessageDraft,
     TeamMessageType,
     TeamProtocolCoordinator,
@@ -87,6 +88,41 @@ class RecordingAutonomousWorkSource:
         return self.work_item
 
 
+class RecordingAutonomousWorkVerifier:
+    """返回预设核验结论，记录 Runner 是否携带正确的执行事实。"""
+
+    def __init__(self, *, completed: bool) -> None:
+        self.completed = completed
+        self.calls: list[tuple[TeamAutonomousWorkItem, TeamPromptExecution | None]] = []
+
+    def verify(
+        self,
+        *,
+        member: TeamMember,
+        work_item: TeamAutonomousWorkItem,
+        execution: TeamPromptExecution | None,
+    ) -> TeamAutonomousWorkOutcome:
+        self.calls.append((work_item, execution))
+        return TeamAutonomousWorkOutcome(
+            work_item=work_item,
+            execution=execution,
+            completed=self.completed,
+            detail=f"{member.member_id} 的核验结论。",
+        )
+
+
+class RecordingAutonomousResultReporter:
+    """记录自主任务结论，避免 Runner 测试依赖具体收件箱格式。"""
+
+    def __init__(self) -> None:
+        self.outcomes: list[TeamAutonomousWorkOutcome] = []
+
+    def report(self, *, member: TeamMember, outcome: TeamAutonomousWorkOutcome) -> object:
+        assert member.member_id == "member-001"
+        self.outcomes.append(outcome)
+        return object()
+
+
 class StopAfterFirstWait:
     """第一次等待即停止循环，验证线程目标无需真实 sleep。"""
 
@@ -152,6 +188,8 @@ def _runner(
     thread_factory: object | None = None,
     protocol_dispatcher: object | None = None,
     autonomous_work_source: object | None = None,
+    autonomous_work_verifier: object | None = None,
+    autonomous_result_reporter: object | None = None,
 ) -> TeamMemberRunner:
     dispatcher = EventTeamDispatcher()
     inbox = JsonFileTeamInboxRepository(tmp_path)
@@ -171,6 +209,8 @@ def _runner(
         thread_factory=thread_factory or InlineThreadFactory(),  # type: ignore[arg-type]
         protocol_dispatcher=protocol_dispatcher,  # type: ignore[arg-type]
         autonomous_work_source=autonomous_work_source,  # type: ignore[arg-type]
+        autonomous_work_verifier=autonomous_work_verifier,  # type: ignore[arg-type]
+        autonomous_result_reporter=autonomous_result_reporter,  # type: ignore[arg-type]
     )
 
 
@@ -326,6 +366,51 @@ def test_runner_does_not_execute_a_model_run_when_no_autonomous_work_is_claimed(
     assert executor.prompts == []
 
 
+def test_runner_reports_only_the_verifier_completion_outcome_for_autonomous_work(
+    tmp_path: Path,
+) -> None:
+    work_item = TeamAutonomousWorkItem(
+        task_id="task-api",
+        subject="实现登录 API。",
+        description="",
+    )
+    verifier = RecordingAutonomousWorkVerifier(completed=True)
+    reporter = RecordingAutonomousResultReporter()
+
+    assert _runner(
+        tmp_path,
+        executor=RecordingExecutor(),
+        autonomous_work_source=RecordingAutonomousWorkSource(work_item),
+        autonomous_work_verifier=verifier,
+        autonomous_result_reporter=reporter,
+    ).process_once() is True
+
+    assert verifier.calls[0][0] is work_item
+    assert verifier.calls[0][1] is not None
+    assert reporter.outcomes[0].completed is True
+
+
+def test_runner_reports_a_failed_outcome_when_autonomous_run_raises(tmp_path: Path) -> None:
+    work_item = TeamAutonomousWorkItem(
+        task_id="task-api",
+        subject="实现登录 API。",
+        description="",
+    )
+    verifier = RecordingAutonomousWorkVerifier(completed=False)
+    reporter = RecordingAutonomousResultReporter()
+
+    assert _runner(
+        tmp_path,
+        executor=RecordingExecutor(fail=True),
+        autonomous_work_source=RecordingAutonomousWorkSource(work_item),
+        autonomous_work_verifier=verifier,
+        autonomous_result_reporter=reporter,
+    ).process_once() is False
+
+    assert verifier.calls == [(work_item, None)]
+    assert reporter.outcomes[0].completed is False
+
+
 def test_runner_and_dispatcher_use_injected_event_waiter_and_thread_factory(
     tmp_path: Path,
 ) -> None:
@@ -382,6 +467,30 @@ def test_runner_rejects_an_invalid_autonomous_work_source(tmp_path: Path) -> Non
             waiter=StopAfterFirstWait(),
             thread_factory=InlineThreadFactory(),  # type: ignore[arg-type]
             autonomous_work_source=object(),  # type: ignore[arg-type]
+        )
+
+
+def test_runner_requires_autonomous_verifier_and_reporter_to_be_configured_together(
+    tmp_path: Path,
+) -> None:
+    inbox = JsonFileTeamInboxRepository(tmp_path)
+
+    with pytest.raises(ValueError, match="必须同时配置"):
+        TeamMemberRunner(
+            member=_member(),
+            inbox_repository=inbox,
+            agent_executor=RecordingExecutor(),
+            result_reporter=InboxTeamResultReporter(
+                inbox_repository=inbox,
+                clock=AdvancingClock(),
+                dispatcher=EventTeamDispatcher(),
+            ),
+            id_generator=SequenceIdGenerator(),
+            clock=AdvancingClock(),
+            signal_registry=EventTeamDispatcher(),
+            waiter=StopAfterFirstWait(),
+            thread_factory=InlineThreadFactory(),  # type: ignore[arg-type]
+            autonomous_work_verifier=RecordingAutonomousWorkVerifier(completed=True),
         )
 
 

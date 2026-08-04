@@ -9,7 +9,9 @@ from .autonomous_work_prompt import format_autonomous_work_prompt
 from .inbox_prompt import format_inbox_prompt
 from .ports import (
     TeamAgentExecutor,
+    TeamAutonomousResultReporter,
     TeamAutonomousWorkSource,
+    TeamAutonomousWorkVerifier,
     TeamClock,
     TeamIdGenerator,
     TeamInboxRepository,
@@ -20,7 +22,13 @@ from .ports import (
     TeamWaiter,
 )
 from .protocol_routing import TeamProtocolInboxRouter
-from .schema import InboxReservation, TeamMember, TeamMessage
+from .schema import (
+    InboxReservation,
+    TeamAutonomousWorkItem,
+    TeamMember,
+    TeamMessage,
+    TeamPromptExecution,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -43,6 +51,8 @@ class TeamMemberRunner:
         thread_factory: TeamThreadFactory,
         protocol_dispatcher: TeamProtocolMessageDispatcher | None = None,
         autonomous_work_source: TeamAutonomousWorkSource | None = None,
+        autonomous_work_verifier: TeamAutonomousWorkVerifier | None = None,
+        autonomous_result_reporter: TeamAutonomousResultReporter | None = None,
         batch_size: int = 10,
         check_interval_seconds: float = 1.0,
     ) -> None:
@@ -78,6 +88,16 @@ class TeamMemberRunner:
             getattr(autonomous_work_source, "claim_next_work", None)
         ):
             raise TypeError("autonomous_work_source 必须提供 claim_next_work 方法或为 None。")
+        if autonomous_work_verifier is not None and not callable(
+            getattr(autonomous_work_verifier, "verify", None)
+        ):
+            raise TypeError("autonomous_work_verifier 必须提供 verify 方法或为 None。")
+        if autonomous_result_reporter is not None and not callable(
+            getattr(autonomous_result_reporter, "report", None)
+        ):
+            raise TypeError("autonomous_result_reporter 必须提供 report 方法或为 None。")
+        if (autonomous_work_verifier is None) != (autonomous_result_reporter is None):
+            raise ValueError("自主任务核验器和结果回传器必须同时配置或同时省略。")
         if isinstance(batch_size, bool) or not isinstance(batch_size, int) or batch_size < 1:
             raise ValueError("字段“batch_size”必须是正整数。")
         if (
@@ -101,6 +121,8 @@ class TeamMemberRunner:
             else None
         )
         self._autonomous_work_source = autonomous_work_source
+        self._autonomous_work_verifier = autonomous_work_verifier
+        self._autonomous_result_reporter = autonomous_result_reporter
         self._batch_size = batch_size
         self._check_interval_seconds = float(check_interval_seconds)
         self._stop_event = Event()
@@ -143,24 +165,68 @@ class TeamMemberRunner:
         return self._process_protocol_messages(reservation)
 
     def _execute_autonomous_work(self) -> bool:
-        """在没有收件箱工作时执行一项已认领任务，本步不伪造完成或结果回传。"""
+        """在没有收件箱工作时执行一项已认领任务，并交由可选核验器确认结果。"""
 
         if self._autonomous_work_source is None:
             return False
         try:
             work_item = self._autonomous_work_source.claim_next_work(member=self._member)
-            if work_item is None:
-                return False
+        except Exception:
+            logger.warning(
+                "获取 Team 自主任务失败，成员将在后续轮询时重试。",
+                exc_info=True,
+                extra={"member_id": self._member.member_id},
+            )
+            return False
+        if work_item is None:
+            return False
+        try:
             execution = self._agent_executor.execute(
                 member=self._member,
                 prompt=format_autonomous_work_prompt(work_item),
             )
             if execution.session_id != self._member.session_id:
                 raise ValueError("Team 自主任务执行结果不属于该成员的 Session。")
-            return True
+            return self._verify_and_report_autonomous_work(
+                work_item=work_item,
+                execution=execution,
+            )
         except Exception:
             logger.warning(
                 "Team 自主任务 Run 失败，任务状态保持不变并等待后续处理。",
+                exc_info=True,
+                extra={"member_id": self._member.member_id},
+            )
+            return self._verify_and_report_autonomous_work(
+                work_item=work_item,
+                execution=None,
+            )
+
+    def _verify_and_report_autonomous_work(
+        self,
+        *,
+        work_item: TeamAutonomousWorkItem,
+        execution: TeamPromptExecution | None,
+    ) -> bool:
+        """可选地核验并回传自主工作；未装配时保持第三步的执行兼容行为。"""
+
+        if self._autonomous_work_verifier is None:
+            return execution is not None
+        assert self._autonomous_result_reporter is not None
+        try:
+            outcome = self._autonomous_work_verifier.verify(
+                member=self._member,
+                work_item=work_item,
+                execution=execution,
+            )
+            self._autonomous_result_reporter.report(
+                member=self._member,
+                outcome=outcome,
+            )
+            return outcome.completed
+        except Exception:
+            logger.warning(
+                "Team 自主任务结果核验或回传失败，任务状态保持不变并等待后续处理。",
                 exc_info=True,
                 extra={"member_id": self._member.member_id},
             )

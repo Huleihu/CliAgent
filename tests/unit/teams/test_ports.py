@@ -8,6 +8,7 @@ from local_dev_agent.teams import (
     TeamAutonomousWorkItem,
     TeamAutonomousWorkOutcome,
     TeamAutonomousWorkSource,
+    TeamAutonomousWorkVerifier,
     TeamAssignment,
     TeamAssignmentRepository,
     TeamClock,
@@ -179,6 +180,16 @@ class FixedAutonomousWorkSource:
         )
 
 
+class FixedAutonomousWorkVerifier:
+    def verify(self, *, member, work_item, execution) -> TeamAutonomousWorkOutcome:
+        return TeamAutonomousWorkOutcome(
+            work_item=work_item,
+            execution=execution,
+            completed=True,
+            detail=f"{member.member_id} 已完成。",
+        )
+
+
 class RecordingResultReporter:
     def report(self, *, member, source_messages, execution) -> tuple[TeamMessage, ...]:
         return ()
@@ -240,6 +251,7 @@ def test_team_ports_accept_structural_implementations() -> None:
     dispatcher: TeamDispatcher = RecordingDispatcher()
     executor: TeamAgentExecutor = FixedAgentExecutor()
     autonomous_work_source: TeamAutonomousWorkSource = FixedAutonomousWorkSource()
+    autonomous_work_verifier: TeamAutonomousWorkVerifier = FixedAutonomousWorkVerifier()
     result_reporter: TeamResultReporter = RecordingResultReporter()
     autonomous_result_reporter: TeamAutonomousResultReporter = (
         RecordingAutonomousResultReporter()
@@ -291,6 +303,12 @@ def test_team_ports_accept_structural_implementations() -> None:
         completed=False,
         detail="成员尚未执行。",
     )
+    verified = autonomous_work_verifier.verify(
+        member=member,
+        work_item=work_item,
+        execution=executor.execute(member=member, prompt="继续处理。"),
+    )
+    assert verified.completed is True
     assert autonomous_result_reporter.report(member=member, outcome=outcome).message_id == "result-001"
     assert execution_gate.try_acquire() is True
     assert execution_gate.release() is None
