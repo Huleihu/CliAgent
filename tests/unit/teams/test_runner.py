@@ -11,6 +11,7 @@ from local_dev_agent.teams import (
     JsonFileTeamProtocolStateRepository,
     TeamMember,
     TeamMemberRunner,
+    TeamAutonomousWorkItem,
     TeamMessageDraft,
     TeamMessageType,
     TeamProtocolCoordinator,
@@ -72,6 +73,18 @@ class FailingResultReporter:
 
     def report(self, **_: object) -> tuple[object, ...]:
         raise RuntimeError("模拟结果回传失败")
+
+
+class RecordingAutonomousWorkSource:
+    """为成员返回预设自主工作项，记录是否因收件箱优先级被调用。"""
+
+    def __init__(self, work_item: TeamAutonomousWorkItem | None) -> None:
+        self.work_item = work_item
+        self.member_ids: list[str] = []
+
+    def claim_next_work(self, *, member: TeamMember) -> TeamAutonomousWorkItem | None:
+        self.member_ids.append(member.member_id)
+        return self.work_item
 
 
 class StopAfterFirstWait:
@@ -138,6 +151,7 @@ def _runner(
     waiter: object | None = None,
     thread_factory: object | None = None,
     protocol_dispatcher: object | None = None,
+    autonomous_work_source: object | None = None,
 ) -> TeamMemberRunner:
     dispatcher = EventTeamDispatcher()
     inbox = JsonFileTeamInboxRepository(tmp_path)
@@ -156,6 +170,7 @@ def _runner(
         waiter=waiter or StopAfterFirstWait(),  # type: ignore[arg-type]
         thread_factory=thread_factory or InlineThreadFactory(),  # type: ignore[arg-type]
         protocol_dispatcher=protocol_dispatcher,  # type: ignore[arg-type]
+        autonomous_work_source=autonomous_work_source,  # type: ignore[arg-type]
     )
 
 
@@ -234,6 +249,83 @@ def test_runner_releases_assignment_when_result_reporting_fails(tmp_path: Path) 
     ] == ["message-001"]
 
 
+def test_runner_executes_claimed_autonomous_work_only_when_inbox_is_empty(tmp_path: Path) -> None:
+    executor = RecordingExecutor()
+    work_source = RecordingAutonomousWorkSource(
+        TeamAutonomousWorkItem(
+            task_id="task-api",
+            subject="实现登录 API。",
+            description="新增登录端点。",
+        )
+    )
+
+    assert (
+        _runner(
+            tmp_path,
+            executor=executor,
+            result_reporter=FailingResultReporter(),
+            autonomous_work_source=work_source,
+        ).process_once()
+        is True
+    )
+
+    assert work_source.member_ids == ["member-001"]
+    assert executor.prompts == [
+        "[S17 自主任务]\n"
+        "你已成功认领项目任务：task-api\n"
+        "标题：实现登录 API。\n"
+        "详细要求：\n"
+        "新增登录端点。\n\n"
+        "请在当前工作区完成并验证该任务。\n"
+        "仅当任务实际完成后，必须调用 task_complete，并传入 task_id=\"task-api\"。\n"
+        "不要认领其他任务，也不要修改其他任务的归属。"
+    ]
+    assert JsonFileTeamInboxRepository(tmp_path).list_unread(
+        team_id="team-001",
+        recipient_member_id="lead-001",
+    ) == ()
+
+
+def test_runner_keeps_existing_inbox_work_ahead_of_autonomous_claims(tmp_path: Path) -> None:
+    inbox = JsonFileTeamInboxRepository(tmp_path)
+    _send(inbox)
+    executor = RecordingExecutor()
+    work_source = RecordingAutonomousWorkSource(
+        TeamAutonomousWorkItem(
+            task_id="task-api",
+            subject="实现登录 API。",
+            description="",
+        )
+    )
+
+    assert _runner(
+        tmp_path,
+        executor=executor,
+        autonomous_work_source=work_source,
+    ).process_once() is True
+
+    assert work_source.member_ids == []
+    assert executor.prompts == [
+        "[Team 收件箱]\n#1 来自 lead-001（assignment）：检查数据库迁移。"
+    ]
+
+
+def test_runner_does_not_execute_a_model_run_when_no_autonomous_work_is_claimed(
+    tmp_path: Path,
+) -> None:
+    executor = RecordingExecutor()
+    work_source = RecordingAutonomousWorkSource(None)
+
+    assert _runner(
+        tmp_path,
+        executor=executor,
+        autonomous_work_source=work_source,
+    ).process_once() is False
+
+    assert work_source.member_ids == ["member-001"]
+    assert executor.prompts == []
+
+
 def test_runner_and_dispatcher_use_injected_event_waiter_and_thread_factory(
     tmp_path: Path,
 ) -> None:
@@ -271,6 +363,28 @@ def test_runner_and_dispatcher_use_injected_event_waiter_and_thread_factory(
         runner.start()
 
 
+def test_runner_rejects_an_invalid_autonomous_work_source(tmp_path: Path) -> None:
+    inbox = JsonFileTeamInboxRepository(tmp_path)
+
+    with pytest.raises(TypeError, match="autonomous_work_source 必须提供"):
+        TeamMemberRunner(
+            member=_member(),
+            inbox_repository=inbox,
+            agent_executor=RecordingExecutor(),
+            result_reporter=InboxTeamResultReporter(
+                inbox_repository=inbox,
+                clock=AdvancingClock(),
+                dispatcher=EventTeamDispatcher(),
+            ),
+            id_generator=SequenceIdGenerator(),
+            clock=AdvancingClock(),
+            signal_registry=EventTeamDispatcher(),
+            waiter=StopAfterFirstWait(),
+            thread_factory=InlineThreadFactory(),  # type: ignore[arg-type]
+            autonomous_work_source=object(),  # type: ignore[arg-type]
+        )
+
+
 def test_member_runner_confirms_shutdown_without_runtime_and_releases_earlier_work(
     tmp_path: Path,
 ) -> None:
@@ -296,11 +410,24 @@ def test_member_runner_confirms_shutdown_without_runtime_and_releases_earlier_wo
         idempotency_key="protocol:shutdown-request-001",
     )
     executor = RecordingExecutor()
-    runner = _runner(tmp_path, executor=executor, protocol_dispatcher=coordinator)
+    work_source = RecordingAutonomousWorkSource(
+        TeamAutonomousWorkItem(
+            task_id="task-api",
+            subject="实现登录 API。",
+            description="",
+        )
+    )
+    runner = _runner(
+        tmp_path,
+        executor=executor,
+        protocol_dispatcher=coordinator,
+        autonomous_work_source=work_source,
+    )
 
     assert runner.process_once() is True
 
     assert executor.prompts == []
+    assert work_source.member_ids == []
     assert runner._stop_event.is_set() is True
     assert [
         message.message_id

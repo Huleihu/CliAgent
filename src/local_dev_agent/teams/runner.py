@@ -5,9 +5,11 @@ from __future__ import annotations
 import logging
 from threading import Event, Thread
 
+from .autonomous_work_prompt import format_autonomous_work_prompt
 from .inbox_prompt import format_inbox_prompt
 from .ports import (
     TeamAgentExecutor,
+    TeamAutonomousWorkSource,
     TeamClock,
     TeamIdGenerator,
     TeamInboxRepository,
@@ -40,6 +42,7 @@ class TeamMemberRunner:
         waiter: TeamWaiter,
         thread_factory: TeamThreadFactory,
         protocol_dispatcher: TeamProtocolMessageDispatcher | None = None,
+        autonomous_work_source: TeamAutonomousWorkSource | None = None,
         batch_size: int = 10,
         check_interval_seconds: float = 1.0,
     ) -> None:
@@ -71,6 +74,10 @@ class TeamMemberRunner:
             getattr(protocol_dispatcher, "dispatch", None)
         ):
             raise TypeError("protocol_dispatcher 必须提供 dispatch 方法或为 None。")
+        if autonomous_work_source is not None and not callable(
+            getattr(autonomous_work_source, "claim_next_work", None)
+        ):
+            raise TypeError("autonomous_work_source 必须提供 claim_next_work 方法或为 None。")
         if isinstance(batch_size, bool) or not isinstance(batch_size, int) or batch_size < 1:
             raise ValueError("字段“batch_size”必须是正整数。")
         if (
@@ -93,6 +100,7 @@ class TeamMemberRunner:
             if protocol_dispatcher is not None
             else None
         )
+        self._autonomous_work_source = autonomous_work_source
         self._batch_size = batch_size
         self._check_interval_seconds = float(check_interval_seconds)
         self._stop_event = Event()
@@ -119,7 +127,7 @@ class TeamMemberRunner:
             self._wake_event.set()
 
     def process_once(self) -> bool:
-        """预留一批消息并执行一个独立 Run；失败时释放整批消息等待后续重投。"""
+        """优先消费收件箱；只有收件箱为空时才尝试领取并执行自主任务。"""
 
         reservation = self._inbox_repository.reserve_unread(
             team_id=self._member.team_id,
@@ -129,10 +137,34 @@ class TeamMemberRunner:
             limit=self._batch_size,
         )
         if reservation is None:
-            return False
+            return self._execute_autonomous_work()
         if self._protocol_router is None:
             return self._execute_agent_messages(reservation)
         return self._process_protocol_messages(reservation)
+
+    def _execute_autonomous_work(self) -> bool:
+        """在没有收件箱工作时执行一项已认领任务，本步不伪造完成或结果回传。"""
+
+        if self._autonomous_work_source is None:
+            return False
+        try:
+            work_item = self._autonomous_work_source.claim_next_work(member=self._member)
+            if work_item is None:
+                return False
+            execution = self._agent_executor.execute(
+                member=self._member,
+                prompt=format_autonomous_work_prompt(work_item),
+            )
+            if execution.session_id != self._member.session_id:
+                raise ValueError("Team 自主任务执行结果不属于该成员的 Session。")
+            return True
+        except Exception:
+            logger.warning(
+                "Team 自主任务 Run 失败，任务状态保持不变并等待后续处理。",
+                exc_info=True,
+                extra={"member_id": self._member.member_id},
+            )
+            return False
 
     def _process_protocol_messages(self, reservation: InboxReservation) -> bool:
         """先消费无需模型参与的协议消息，再把剩余有效消息作为一个子批次交给 Agent。"""
