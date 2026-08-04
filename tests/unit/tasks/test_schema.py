@@ -19,6 +19,7 @@ def test_task_create_builds_a_pending_snapshot_and_copies_dependencies() -> None
     assert task.status is TaskStatus.PENDING
     assert task.owner is None
     assert task.blocked_by == ("task-schema",)
+    assert task.worktree is None
 
 
 def test_task_accepts_an_empty_description() -> None:
@@ -34,6 +35,7 @@ def test_task_accepts_an_empty_description() -> None:
         ({"task_id": "task-1", "subject": " "}, "subject”必须是非空字符串"),
         ({"task_id": "task-1", "subject": "任务", "description": 1}, "description”必须是字符串"),
         ({"task_id": "task-1", "subject": "任务", "owner": " "}, "owner”必须是非空字符串"),
+        ({"task_id": "task-1", "subject": "任务", "worktree": " "}, "worktree”必须是非空字符串"),
     ],
 )
 def test_task_rejects_invalid_text_fields(
@@ -115,3 +117,16 @@ def test_task_is_immutable() -> None:
 
     with pytest.raises(FrozenInstanceError):
         task.subject = "不能修改"  # type: ignore[misc]
+
+
+def test_task_accepts_an_optional_worktree_binding() -> None:
+    task = Task(
+        task_id="task-api",
+        subject="实现 API。",
+        description="",
+        status=TaskStatus.PENDING,
+        owner=None,
+        worktree="api-login",
+    )
+
+    assert task.worktree == "api-login"

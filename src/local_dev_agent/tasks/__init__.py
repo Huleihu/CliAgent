@@ -8,11 +8,18 @@ from .errors import (
     TaskRepositoryError,
     TaskRuleViolationError,
     TaskStateTransitionError,
+    TaskWorktreeAlreadyBoundError,
 )
 from .json_repository import JsonFileTaskRepository
 from .identifiers import UuidTaskIdGenerator
-from .ports import AutonomousTaskBoard, TaskIdGenerator, TaskRepository, TaskSnapshotReader
-from .rules import can_claim_task, claim_task, complete_task, unresolved_dependency_ids
+from .ports import (
+    AutonomousTaskBoard,
+    TaskIdGenerator,
+    TaskRepository,
+    TaskSnapshotReader,
+    TaskWorktreeBinder,
+)
+from .rules import bind_worktree, can_claim_task, claim_task, complete_task, unresolved_dependency_ids
 from .schema import Task, TaskStatus
 from .service import TaskApplicationService, TaskCompletion, TaskService
 
@@ -30,11 +37,14 @@ __all__ = [
     "TaskRuleViolationError",
     "TaskSnapshotReader",
     "TaskStateTransitionError",
+    "TaskWorktreeAlreadyBoundError",
+    "TaskWorktreeBinder",
     "TaskStatus",
     "CorruptedTaskFileError",
     "JsonFileTaskRepository",
     "TaskService",
     "UuidTaskIdGenerator",
+    "bind_worktree",
     "can_claim_task",
     "claim_task",
     "complete_task",

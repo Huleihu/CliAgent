@@ -3,6 +3,7 @@ from local_dev_agent.tasks import (
     Task,
     TaskRepository,
     TaskSnapshotReader,
+    TaskWorktreeBinder,
 )
 
 
@@ -66,3 +67,24 @@ def test_task_snapshot_reader_port_accepts_a_structural_implementation() -> None
     reader: TaskSnapshotReader = FakeTaskSnapshotReader()
 
     assert reader.get_task("task-1") is task
+
+
+def test_task_worktree_binder_port_accepts_a_structural_implementation() -> None:
+    task = Task.create(task_id="task-1", subject="绑定工作树。")
+
+    class FakeTaskWorktreeBinder:
+        def bind_worktree(self, *, task_id: str, worktree: str) -> Task:
+            assert task_id == "task-1"
+            return Task(
+                task_id=task.task_id,
+                subject=task.subject,
+                description=task.description,
+                status=task.status,
+                owner=task.owner,
+                blocked_by=task.blocked_by,
+                worktree=worktree,
+            )
+
+    binder: TaskWorktreeBinder = FakeTaskWorktreeBinder()
+
+    assert binder.bind_worktree(task_id="task-1", worktree="api-login").worktree == "api-login"

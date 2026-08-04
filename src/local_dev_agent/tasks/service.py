@@ -7,8 +7,19 @@ from dataclasses import dataclass
 from typing import Protocol
 
 from .errors import TaskNotFoundError
-from .ports import AutonomousTaskBoard, TaskIdGenerator, TaskRepository, TaskSnapshotReader
-from .rules import can_claim_task, claim_task as apply_claim, complete_task as apply_complete
+from .ports import (
+    AutonomousTaskBoard,
+    TaskIdGenerator,
+    TaskRepository,
+    TaskSnapshotReader,
+    TaskWorktreeBinder,
+)
+from .rules import (
+    bind_worktree as apply_worktree_binding,
+    can_claim_task,
+    claim_task as apply_claim,
+    complete_task as apply_complete,
+)
 from .schema import Task, TaskStatus
 
 
@@ -55,7 +66,7 @@ class TaskApplicationService(Protocol):
         """完成指定任务并返回本次解锁结果。"""
 
 
-class TaskService(AutonomousTaskBoard, TaskSnapshotReader):
+class TaskService(AutonomousTaskBoard, TaskSnapshotReader, TaskWorktreeBinder):
     """提供创建、查询、认领和完成任务的无界面应用用例。"""
 
     def __init__(self, repository: TaskRepository, id_generator: TaskIdGenerator) -> None:
@@ -105,6 +116,20 @@ class TaskService(AutonomousTaskBoard, TaskSnapshotReader):
         if not isinstance(task, Task):
             raise TypeError("任务仓储必须返回 Task 对象或空值。")
         return task
+
+    def bind_worktree(self, *, task_id: str, worktree: str) -> Task:
+        """比较并替换绑定快照，避免与并发认领或同名重试互相覆盖。"""
+
+        while True:
+            task = self.get_task(task_id)
+            bound_task = apply_worktree_binding(task, worktree=worktree)
+            if bound_task is task:
+                return task
+            if self._repository.compare_and_replace(
+                expected=task,
+                replacement=bound_task,
+            ):
+                return bound_task
 
     def claim_task(self, *, task_id: str, owner: str) -> Task:
         """以比较并替换持久化指定认领，竞争失败后按最新快照重新判定规则。"""

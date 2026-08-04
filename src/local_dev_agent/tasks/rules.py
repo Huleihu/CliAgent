@@ -4,7 +4,11 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 
-from .errors import TaskBlockedError, TaskStateTransitionError
+from .errors import (
+    TaskBlockedError,
+    TaskStateTransitionError,
+    TaskWorktreeAlreadyBoundError,
+)
 from .schema import Task, TaskStatus
 
 
@@ -61,6 +65,7 @@ def claim_task(
         status=TaskStatus.IN_PROGRESS,
         owner=owner,
         blocked_by=task.blocked_by,
+        worktree=task.worktree,
     )
 
 
@@ -81,6 +86,30 @@ def complete_task(task: Task) -> Task:
         status=TaskStatus.COMPLETED,
         owner=task.owner,
         blocked_by=task.blocked_by,
+        worktree=task.worktree,
+    )
+
+
+def bind_worktree(task: Task, *, worktree: str) -> Task:
+    """绑定工作树名称且保留任务图状态；同名重试返回原快照。"""
+
+    _require_task(task)
+    if task.worktree == worktree:
+        return task
+    if task.worktree is not None:
+        raise TaskWorktreeAlreadyBoundError(
+            task_id=task.task_id,
+            current_worktree=task.worktree,
+            requested_worktree=worktree,
+        )
+    return Task(
+        task_id=task.task_id,
+        subject=task.subject,
+        description=task.description,
+        status=task.status,
+        owner=task.owner,
+        blocked_by=task.blocked_by,
+        worktree=worktree,
     )
 
 

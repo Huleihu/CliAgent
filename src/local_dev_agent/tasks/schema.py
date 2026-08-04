@@ -40,6 +40,7 @@ class Task:
     status: TaskStatus
     owner: str | None
     blocked_by: tuple[str, ...] = ()
+    worktree: str | None = None
 
     def __post_init__(self) -> None:
         """收束任务字段与生命周期不变量，不在此处遍历任务图。"""
@@ -52,6 +53,8 @@ class Task:
             raise ValueError("任务状态必须是 TaskStatus 枚举值。")
         if self.owner is not None:
             _require_nonempty_text("owner", self.owner)
+        if self.worktree is not None:
+            _require_nonempty_text("worktree", self.worktree)
         if not isinstance(self.blocked_by, tuple) or not all(
             isinstance(task_id, str) and task_id.strip() for task_id in self.blocked_by
         ):

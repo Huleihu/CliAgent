@@ -86,6 +86,54 @@ def test_list_and_get_tasks_delegate_to_the_repository_snapshot() -> None:
     assert service.get_task("task-b") is task_b
 
 
+def test_bind_worktree_persists_only_the_binding_and_allows_same_name_retries() -> None:
+    task = Task.create(
+        task_id="task-api",
+        subject="实现 API。",
+        blocked_by=("task-schema",),
+    )
+    service = _service(task)
+
+    bound = service.bind_worktree(task_id="task-api", worktree="api-login")
+
+    assert bound.worktree == "api-login"
+    assert bound.status is TaskStatus.PENDING
+    assert bound.owner is None
+    assert bound.blocked_by == ("task-schema",)
+    assert service.bind_worktree(task_id="task-api", worktree="api-login") == bound
+
+
+def test_bind_worktree_retries_after_a_concurrent_same_name_binding() -> None:
+    class ConcurrentBindingRepository(InMemoryTaskRepository):
+        def __init__(self, task: Task) -> None:
+            super().__init__((task,))
+            self._has_competed = False
+
+        def compare_and_replace(self, *, expected: Task, replacement: Task) -> bool:
+            if not self._has_competed:
+                self._has_competed = True
+                self._tasks[expected.task_id] = Task(
+                    task_id=expected.task_id,
+                    subject=expected.subject,
+                    description=expected.description,
+                    status=expected.status,
+                    owner=expected.owner,
+                    blocked_by=expected.blocked_by,
+                    worktree="api-login",
+                )
+                return False
+            return super().compare_and_replace(expected=expected, replacement=replacement)
+
+    task = Task.create(task_id="task-api", subject="实现 API。")
+    service = TaskService(ConcurrentBindingRepository(task), SequenceTaskIdGenerator())
+
+    bound = service.bind_worktree(task_id="task-api", worktree="api-login")
+
+    assert bound.worktree == "api-login"
+    assert bound.status is TaskStatus.PENDING
+    assert bound.owner is None
+
+
 def test_get_task_rejects_a_missing_task() -> None:
     with pytest.raises(TaskNotFoundError, match="task-missing.*不存在"):
         _service().get_task("task-missing")

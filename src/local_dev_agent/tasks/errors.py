@@ -34,6 +34,25 @@ class TaskStateTransitionError(TaskRuleViolationError):
         self.status = status
 
 
+class TaskWorktreeAlreadyBoundError(TaskRuleViolationError):
+    """拒绝将已绑定其他工作树的任务改绑到新工作树。"""
+
+    def __init__(
+        self,
+        *,
+        task_id: str,
+        current_worktree: str,
+        requested_worktree: str,
+    ) -> None:
+        super().__init__(
+            f"任务“{task_id}”已绑定工作树“{current_worktree}”，"
+            f"不能改绑为“{requested_worktree}”。"
+        )
+        self.task_id = task_id
+        self.current_worktree = current_worktree
+        self.requested_worktree = requested_worktree
+
+
 class TaskRepositoryError(ValueError):
     """任务仓储适配器产生的基础设施错误。"""
 

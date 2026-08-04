@@ -26,6 +26,7 @@ def encode_task(task: Task) -> dict[str, object]:
             "status": task.status.value,
             "owner": task.owner,
             "blocked_by": list(task.blocked_by),
+            "worktree": task.worktree,
         },
     }
 
@@ -47,6 +48,7 @@ def decode_task(payload: dict[str, Any]) -> Task:
         status=status,
         owner=_get_optional_string(state, "owner"),
         blocked_by=tuple(_get_string_list(state, "blocked_by")),
+        worktree=_get_optional_string(state, "worktree"),
     )
 
 

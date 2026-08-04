@@ -1,5 +1,7 @@
 # 项目交接
 
+> S18 第 1 步（未提交）：S12 `Task` 新增可选 `worktree` 字段，旧 JSON 快照缺失该字段时恢复为 `None`，新快照仍使用 schema version 1 并显式写入该字段。新增 `TaskWorktreeBinder` 窄端口、纯 `bind_worktree()` 规则和 `TaskService.bind_worktree()` CAS 用例：绑定只改变 `worktree`，不改变 `pending`/`in_progress`/`completed`、`owner` 或依赖；同名重试幂等，不允许改绑到其他名称。认领与完成转换会保留绑定，任务工具的 JSON 视图也会显示 `worktree`。本步未实现工作树名称严格校验、Git/subprocess、事件日志、Lead 工具、Team 或 Run cwd 接入。验证：`python -m pytest tests/unit/tasks tests/unit/tools/test_task_system_tools.py` 在已授权环境中 84 passed；`python -m ruff check src/local_dev_agent/tasks src/local_dev_agent/tools/builtin tests/unit/tasks tests/unit/tools/test_task_system_tools.py` 通过。下一步应建立独立 worktree 领域的名称校验、生命周期端口和事件契约，仍不调用 Git。
+
 > 讲解偏好更新（未提交）：`AGENTS.md` 新增“代码讲解偏好”。后续解释调用链、异步协作、消息路由和运行时流程时，应以真实请求的时间顺序和最小数据流图为主线，明确各层职责、自动行为与显式工具调用，并使用具体消息示例说明分流。未执行测试：仅修改协作说明文档。
 
 > S17 第 1 步（未提交）：S12 任务图新增窄的 `AutonomousTaskBoard` 公共端口，`TaskService` 可稳定列出依赖已满足的候选任务，并以 `claim_next_task(owner)` 逐项尝试认领。`TaskRepository` 新增比较并替换契约；JSON 适配器按解析后的任务根目录共享进程内可重入锁，使“读取 pending 快照 → 比较当前快照 → 写入 in_progress/owner”成为一个临界区。两个成员同时发现同一任务时，至多一人认领成功；竞争失败的成员会继续尝试下一候选任务。既有 `task_claim` 也改为使用同一比较并替换边界，避免显式认领绕开竞争保护。当前保证只覆盖同一 Python 进程，尚未实现跨进程文件锁；未修改 Team、`MinimalAgentLoop`、`runtime/loop.py` 或 `runtime/notifications.py`。验证：任务领域和工具定向 pytest 74 passed、扩展 S12/S15/S16/CLI 回归 144 passed，定向 Ruff 通过。下一步应定义 Team 自主工作端口与 S12 适配器，仍不接入 Member Runner。

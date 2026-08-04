@@ -93,6 +93,7 @@ def test_task_tools_create_query_claim_complete_and_report_unblocked_tasks() -> 
 
     assert schema["task_id"] == "task-schema"
     assert api["blocked_by"] == ["task-schema"]
+    assert api["worktree"] is None
     assert [task["task_id"] for task in list_tasks.run({})["tasks"]] == [  # type: ignore[index]
         "task-api",
         "task-schema",
@@ -113,6 +114,7 @@ def test_task_tools_create_query_claim_complete_and_report_unblocked_tasks() -> 
             "status": "pending",
             "owner": None,
             "blocked_by": ["task-schema"],
+            "worktree": None,
         }
     ]
     assert claimed_api["owner"] == "agent-api"

@@ -42,6 +42,13 @@ class TaskSnapshotReader(Protocol):
         """读取指定任务的当前快照；不存在时由实现报告领域错误。"""
 
 
+class TaskWorktreeBinder(Protocol):
+    """为工作树领域提供任务绑定事实的窄写入端口。"""
+
+    def bind_worktree(self, *, task_id: str, worktree: str) -> Task:
+        """原子绑定任务与工作树名称，不改变任务状态或负责人。"""
+
+
 class TaskIdGenerator(Protocol):
     """为新建任务提供可替换且无需仓储参与的稳定标识。"""
 

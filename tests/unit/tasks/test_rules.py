@@ -5,6 +5,8 @@ from local_dev_agent.tasks import (
     TaskBlockedError,
     TaskStateTransitionError,
     TaskStatus,
+    TaskWorktreeAlreadyBoundError,
+    bind_worktree,
     can_claim_task,
     claim_task,
     complete_task,
@@ -51,11 +53,14 @@ def test_can_claim_task_requires_pending_status_and_completed_dependencies() -> 
 
 
 def test_claim_task_returns_a_new_owned_in_progress_snapshot() -> None:
-    task = Task.create(
-        task_id="task-api",
-        subject="实现 API。",
-        description="新增登录端点。",
-        blocked_by=("task-schema",),
+    task = bind_worktree(
+        Task.create(
+            task_id="task-api",
+            subject="实现 API。",
+            description="新增登录端点。",
+            blocked_by=("task-schema",),
+        ),
+        worktree="api-login",
     )
 
     claimed = claim_task(
@@ -69,6 +74,7 @@ def test_claim_task_returns_a_new_owned_in_progress_snapshot() -> None:
     assert claimed.status is TaskStatus.IN_PROGRESS
     assert claimed.owner == "agent-api"
     assert claimed.blocked_by == ("task-schema",)
+    assert claimed.worktree == "api-login"
 
 
 def test_claim_task_rejects_blocked_tasks() -> None:
@@ -97,6 +103,7 @@ def test_complete_task_returns_a_new_completed_snapshot_and_keeps_owner() -> Non
         status=TaskStatus.IN_PROGRESS,
         owner="agent-api",
         blocked_by=("task-schema",),
+        worktree="api-login",
     )
 
     completed = complete_task(in_progress)
@@ -105,6 +112,31 @@ def test_complete_task_returns_a_new_completed_snapshot_and_keeps_owner() -> Non
     assert completed.status is TaskStatus.COMPLETED
     assert completed.owner == "agent-api"
     assert completed.blocked_by == ("task-schema",)
+    assert completed.worktree == "api-login"
+
+
+def test_bind_worktree_preserves_task_status_owner_and_dependencies() -> None:
+    task = Task.create(
+        task_id="task-api",
+        subject="实现 API。",
+        blocked_by=("task-schema",),
+    )
+
+    bound = bind_worktree(task, worktree="api-login")
+
+    assert bound.worktree == "api-login"
+    assert bound.status is TaskStatus.PENDING
+    assert bound.owner is None
+    assert bound.blocked_by == ("task-schema",)
+    assert bind_worktree(bound, worktree="api-login") is bound
+
+
+def test_bind_worktree_rejects_rebinding_to_a_different_worktree() -> None:
+    task = Task.create(task_id="task-api", subject="实现 API。")
+    bound = bind_worktree(task, worktree="api-login")
+
+    with pytest.raises(TaskWorktreeAlreadyBoundError, match="api-login.*web-page"):
+        bind_worktree(bound, worktree="web-page")
 
 
 @pytest.mark.parametrize("status", (TaskStatus.PENDING, TaskStatus.COMPLETED))

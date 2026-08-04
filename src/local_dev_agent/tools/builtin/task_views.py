@@ -13,4 +13,5 @@ def task_to_data(task: Task) -> dict[str, object]:
         "status": task.status.value,
         "owner": task.owner,
         "blocked_by": list(task.blocked_by),
+        "worktree": task.worktree,
     }
