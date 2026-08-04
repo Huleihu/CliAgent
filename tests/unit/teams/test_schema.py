@@ -6,6 +6,8 @@ import pytest
 from local_dev_agent.teams import (
     InboxReservation,
     Team,
+    TeamAutonomousWorkItem,
+    TeamAutonomousWorkOutcome,
     TeamAssignment,
     TeamAssignmentStatus,
     TeamMember,
@@ -213,6 +215,33 @@ def test_prompt_execution_requires_runtime_links_but_not_model_specific_types() 
             session_id="session-alice",
             run_id="run-001",
             response_text=object(),  # type: ignore[arg-type]
+        )
+
+
+def test_autonomous_work_contract_keeps_task_fact_separate_from_completion_proof() -> None:
+    work_item = TeamAutonomousWorkItem(
+        task_id="task-api",
+        subject="实现登录 API。",
+        description="新增登录端点。",
+    )
+    outcome = TeamAutonomousWorkOutcome(
+        work_item=work_item,
+        execution=None,
+        completed=False,
+        detail="成员尚未执行任务。",
+    )
+
+    assert outcome.work_item.task_id == "task-api"
+    assert outcome.execution is None
+    assert outcome.completed is False
+    with pytest.raises(ValueError, match="task_id"):
+        TeamAutonomousWorkItem(task_id=" ", subject="实现登录 API。", description="")
+    with pytest.raises(TypeError, match="completed"):
+        TeamAutonomousWorkOutcome(
+            work_item=work_item,
+            execution=None,
+            completed=1,  # type: ignore[arg-type]
+            detail="类型错误。",
         )
 
 

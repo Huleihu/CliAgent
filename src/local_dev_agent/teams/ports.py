@@ -9,6 +9,8 @@ from .protocol_state import TeamProtocolState
 from .schema import (
     InboxReservation,
     Team,
+    TeamAutonomousWorkItem,
+    TeamAutonomousWorkOutcome,
     TeamAssignment,
     TeamMember,
     TeamMessage,
@@ -225,6 +227,13 @@ class TeamAgentExecutor(Protocol):
         """执行一次成员 Run，并返回其 Session、Run 和最终文本。"""
 
 
+class TeamAutonomousWorkSource(Protocol):
+    """为一个空闲成员认领下一项自主工作，不负责执行或回传。"""
+
+    def claim_next_work(self, *, member: TeamMember) -> TeamAutonomousWorkItem | None:
+        """成功认领时返回工作项；没有可认领任务时返回空值。"""
+
+
 class TeamResultReporter(Protocol):
     """将成员成功 Run 的结果投递给派活者，不负责启动接收方 Run。"""
 
@@ -236,6 +245,18 @@ class TeamResultReporter(Protocol):
         execution: TeamPromptExecution,
     ) -> Sequence[TeamMessage]:
         """持久化本次执行对应的结果消息，并返回已投递的消息。"""
+
+
+class TeamAutonomousResultReporter(Protocol):
+    """将经 S12 状态核验的自主工作结论回传给 Team Lead。"""
+
+    def report(
+        self,
+        *,
+        member: TeamMember,
+        outcome: TeamAutonomousWorkOutcome,
+    ) -> TeamMessage:
+        """持久化一条自主工作 RESULT，并返回该消息。"""
 
 
 class TeamExecutionGate(Protocol):

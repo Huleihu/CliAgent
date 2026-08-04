@@ -8,6 +8,8 @@ from .json_protocol_state_repository import JsonFileTeamProtocolStateRepository
 from .json_team_repository import JsonFileTeamMemberRepository, JsonFileTeamRepository
 from .ports import (
     TeamAgentExecutor,
+    TeamAutonomousResultReporter,
+    TeamAutonomousWorkSource,
     TeamAssignmentRepository,
     TeamClock,
     TeamDispatcher,
@@ -42,9 +44,12 @@ from .protocol_types import (
 from .result_reporter import InboxTeamResultReporter
 from .runner import TeamMemberRunner
 from .runtime_adapter import RuntimeTeamAgentExecutor
+from .task_board_work_source import TaskBoardTeamAutonomousWorkSource
 from .schema import (
     InboxReservation,
     Team,
+    TeamAutonomousWorkItem,
+    TeamAutonomousWorkOutcome,
     TeamAssignment,
     TeamAssignmentStatus,
     TeamMember,
@@ -72,6 +77,10 @@ __all__ = [
     "SystemTeamClock",
     "Team",
     "TeamAgentExecutor",
+    "TeamAutonomousResultReporter",
+    "TeamAutonomousWorkItem",
+    "TeamAutonomousWorkOutcome",
+    "TeamAutonomousWorkSource",
     "TeamAssignment",
     "TeamAssignmentRepository",
     "TeamAssignmentStatus",
@@ -111,6 +120,7 @@ __all__ = [
     "TeamShutdownRequester",
     "TeamStatus",
     "TeamThreadFactory",
+    "TaskBoardTeamAutonomousWorkSource",
     "TeamWaiter",
     "UuidTeamIdGenerator",
 ]

@@ -4,6 +4,10 @@ from local_dev_agent.teams import (
     InboxReservation,
     Team,
     TeamAgentExecutor,
+    TeamAutonomousResultReporter,
+    TeamAutonomousWorkItem,
+    TeamAutonomousWorkOutcome,
+    TeamAutonomousWorkSource,
     TeamAssignment,
     TeamAssignmentRepository,
     TeamClock,
@@ -15,6 +19,7 @@ from local_dev_agent.teams import (
     TeamMemberRepository,
     TeamMessage,
     TeamMessageDraft,
+    TeamMessageType,
     TeamPromptExecution,
     TeamProtocolState,
     TeamProtocolStateRepository,
@@ -165,9 +170,33 @@ class FixedAgentExecutor:
         )
 
 
+class FixedAutonomousWorkSource:
+    def claim_next_work(self, *, member: TeamMember) -> TeamAutonomousWorkItem | None:
+        return TeamAutonomousWorkItem(
+            task_id="task-001",
+            subject="实现自主认领。",
+            description="",
+        )
+
+
 class RecordingResultReporter:
     def report(self, *, member, source_messages, execution) -> tuple[TeamMessage, ...]:
         return ()
+
+
+class RecordingAutonomousResultReporter:
+    def report(self, *, member, outcome) -> TeamMessage:
+        return TeamMessage.create(
+            message_id="result-001",
+            team_id=member.team_id,
+            sender_member_id=member.member_id,
+            recipient_member_id="lead-001",
+            sequence=1,
+            message_type=TeamMessageType.RESULT,
+            content=outcome.detail,
+            idempotency_key="result-001",
+            created_at=TIMESTAMP,
+        )
 
 
 class Gate:
@@ -210,7 +239,11 @@ def test_team_ports_accept_structural_implementations() -> None:
     inbox_repository: TeamInboxRepository = InMemoryInboxRepository()
     dispatcher: TeamDispatcher = RecordingDispatcher()
     executor: TeamAgentExecutor = FixedAgentExecutor()
+    autonomous_work_source: TeamAutonomousWorkSource = FixedAutonomousWorkSource()
     result_reporter: TeamResultReporter = RecordingResultReporter()
+    autonomous_result_reporter: TeamAutonomousResultReporter = (
+        RecordingAutonomousResultReporter()
+    )
     execution_gate: TeamExecutionGate = Gate()
     protocol_repository: TeamProtocolStateRepository = InMemoryProtocolStateRepository()
 
@@ -248,7 +281,17 @@ def test_team_ports_accept_structural_implementations() -> None:
     dispatcher.signal(member_id=member.member_id)
     assert dispatcher.member_ids == ["member-001"]  # type: ignore[attr-defined]
     assert executor.execute(member=member, prompt="继续处理。").run_id == "run-001"
+    work_item = autonomous_work_source.claim_next_work(member=member)
+    assert work_item is not None
+    assert work_item.task_id == "task-001"
     assert result_reporter.report(member=member, source_messages=(), execution=executor.execute(member=member, prompt="继续处理。")) == ()
+    outcome = TeamAutonomousWorkOutcome(
+        work_item=work_item,
+        execution=None,
+        completed=False,
+        detail="成员尚未执行。",
+    )
+    assert autonomous_result_reporter.report(member=member, outcome=outcome).message_id == "result-001"
     assert execution_gate.try_acquire() is True
     assert execution_gate.release() is None
     protocol_state = TeamProtocolState.create(

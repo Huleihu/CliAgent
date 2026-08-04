@@ -62,6 +62,23 @@ class TeamMessageDeliveryStatus(StrEnum):
     CONSUMED = "consumed"
 
 
+@dataclass(frozen=True, slots=True)
+class TeamAutonomousWorkItem:
+    """成员自主认领后交给 Runtime 的最小项目任务事实。"""
+
+    task_id: str
+    subject: str
+    description: str
+
+    def __post_init__(self) -> None:
+        """冻结已认领任务的展示内容，避免 Runner 依赖 S12 的具体模型。"""
+
+        object.__setattr__(self, "task_id", _require_nonempty_text("task_id", self.task_id))
+        object.__setattr__(self, "subject", _require_nonempty_text("subject", self.subject))
+        if not isinstance(self.description, str):
+            raise ValueError("字段“description”必须是字符串。")
+
+
 def _normalize_protocol_message_fields(
     *,
     message_type: TeamMessageType,
@@ -745,6 +762,28 @@ class TeamPromptExecution:
         object.__setattr__(self, "run_id", _require_nonempty_text("run_id", self.run_id))
         if not isinstance(self.response_text, str):
             raise ValueError("字段“response_text”必须是字符串。")
+
+
+@dataclass(frozen=True, slots=True)
+class TeamAutonomousWorkOutcome:
+    """自主工作一次执行后的核验结论，供后续 RESULT 回传使用。"""
+
+    work_item: TeamAutonomousWorkItem
+    execution: TeamPromptExecution | None
+    completed: bool
+    detail: str
+
+    def __post_init__(self) -> None:
+        """区分模型执行事实和任务完成事实，避免自由文本被误判为完成。"""
+
+        if not isinstance(self.work_item, TeamAutonomousWorkItem):
+            raise TypeError("work_item 必须是 TeamAutonomousWorkItem 对象。")
+        if self.execution is not None and not isinstance(self.execution, TeamPromptExecution):
+            raise TypeError("execution 必须是 TeamPromptExecution 对象或空值。")
+        if not isinstance(self.completed, bool):
+            raise TypeError("completed 必须是布尔值。")
+        if not isinstance(self.detail, str):
+            raise ValueError("字段“detail”必须是字符串。")
 
 
 def freeze_messages(messages: Iterable[TeamMessage]) -> tuple[TeamMessage, ...]:
