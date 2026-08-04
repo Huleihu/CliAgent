@@ -97,6 +97,7 @@ from local_dev_agent.teams import (
     DaemonTeamThreadFactory,
     EventTeamDispatcher,
     EventTeamWaiter,
+    InboxTeamAutonomousResultReporter,
     InboxTeamResultReporter,
     JsonFileTeamAssignmentRepository,
     JsonFileTeamInboxRepository,
@@ -105,6 +106,8 @@ from local_dev_agent.teams import (
     JsonFileTeamRepository,
     RuntimeTeamAgentExecutor,
     SystemTeamClock,
+    TaskBoardTeamAutonomousWorkSource,
+    TaskBoardTeamAutonomousWorkVerifier,
     TeamMember,
     Team,
     TeamExecutionGate,
@@ -394,6 +397,7 @@ def register_cli_team_capability(
     repository: StateRepository,
     loop: MinimalAgentLoop,
     execution_gate: TeamExecutionGate,
+    task_service: TaskService | None = None,
     clock: SystemTeamClock | None = None,
     waiter: TeamWaiter | None = None,
     thread_factory: TeamThreadFactory | None = None,
@@ -409,17 +413,19 @@ def register_cli_team_capability(
         for method_name in ("try_acquire", "release")
     ):
         raise TypeError("execution_gate 必须提供 try_acquire 和 release 方法。")
+    active_task_service = task_service or create_task_service(workspace)
     state_root = workspace / "var" / "state" / "teams"
     dispatcher = EventTeamDispatcher()
     active_clock = clock if clock is not None else SystemTeamClock()
     inbox_repository = JsonFileTeamInboxRepository(state_root)
+    team_repository = JsonFileTeamRepository(state_root)
     protocol_dispatcher = TeamProtocolCoordinator(
         state_repository=JsonFileTeamProtocolStateRepository(state_root),
         inbox_repository=inbox_repository,
         clock=active_clock,
     )
     service = TeamService(
-        team_repository=JsonFileTeamRepository(state_root),
+        team_repository=team_repository,
         member_repository=JsonFileTeamMemberRepository(state_root),
         assignment_repository=JsonFileTeamAssignmentRepository(state_root),
         inbox_repository=inbox_repository,
@@ -441,6 +447,18 @@ def register_cli_team_capability(
         clock=active_clock,
         dispatcher=dispatcher,
     )
+    autonomous_work_source = TaskBoardTeamAutonomousWorkSource(
+        task_board=active_task_service,
+    )
+    autonomous_work_verifier = TaskBoardTeamAutonomousWorkVerifier(
+        task_reader=active_task_service,
+    )
+    autonomous_result_reporter = InboxTeamAutonomousResultReporter(
+        team_repository=team_repository,
+        inbox_repository=inbox_repository,
+        clock=active_clock,
+        dispatcher=dispatcher,
+    )
 
     def create_runner(member: TeamMember) -> TeamMemberRunner:
         return TeamMemberRunner(
@@ -454,6 +472,9 @@ def register_cli_team_capability(
             waiter=active_waiter,
             thread_factory=active_thread_factory,
             protocol_dispatcher=protocol_dispatcher,
+            autonomous_work_source=autonomous_work_source,
+            autonomous_work_verifier=autonomous_work_verifier,
+            autonomous_result_reporter=autonomous_result_reporter,
         )
 
     def print_lead_response(execution: TeamPromptExecution) -> None:
@@ -689,6 +710,7 @@ def main() -> None:
         repository=repository,
         loop=loop,
         execution_gate=execution_gate,
+        task_service=task_service,
     )
     cron_capability.start()
 

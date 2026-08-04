@@ -49,7 +49,13 @@ from local_dev_agent.system_prompt import (
     create_cli_system_prompt_provider,
 )
 from local_dev_agent.todos import TodoReminderPolicy
-from local_dev_agent.teams import JsonFileTeamProtocolStateRepository, TeamProtocolStatus
+from local_dev_agent.tasks import TaskStatus
+from local_dev_agent.teams import (
+    JsonFileTeamInboxRepository,
+    JsonFileTeamProtocolStateRepository,
+    TeamMessageType,
+    TeamProtocolStatus,
+)
 from local_dev_agent.subagents import SubagentPolicy, SubagentToolRegistryFactory
 from local_dev_agent.tools import ToolCallRequest, ToolExecutionContext
 from local_dev_agent.tools.builtin import TaskTool
@@ -533,6 +539,141 @@ def test_cli_team_composition_registers_parent_tools_and_starts_registered_membe
         "assign_team_work",
         "send_team_message",
     }.intersection(definition.name for definition in child_registry.list_definitions())
+    capability.stop()
+
+
+def test_cli_team_capability_completes_dependency_tasks_without_explicit_assignment(
+    tmp_path,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    state_root = workspace / "var" / "state"
+    repository = JsonFileStateRepository(state_root)
+    lead_session = SessionState.create(
+        session_id="session-lead",
+        tenant_id="local",
+        user_id="local",
+        project_id=str(workspace),
+    )
+    alice_session = SessionState.create(
+        session_id="session-alice",
+        tenant_id="local",
+        user_id="local",
+        project_id=str(workspace),
+    )
+    bob_session = SessionState.create(
+        session_id="session-bob",
+        tenant_id="local",
+        user_id="local",
+        project_id=str(workspace),
+    )
+    for session in (lead_session, alice_session, bob_session):
+        repository.save_session(session)
+
+    task_service = create_task_service(workspace)
+    schema_task = task_service.create_task(subject="建立用户表。")
+    api_task = task_service.create_task(
+        subject="实现登录 API。",
+        blocked_by=(schema_task.task_id,),
+    )
+    model = ScriptedModel(
+        (
+            ModelResponse(
+                stop_reason=StopReason.TOOL_USE,
+                content=(
+                    ToolUseBlock(
+                        tool_use_id="toolu-schema-complete",
+                        name="task_complete",
+                        input={"task_id": schema_task.task_id},
+                    ),
+                ),
+            ),
+            ModelResponse.text_completion("用户表已建立并验证。"),
+            ModelResponse(
+                stop_reason=StopReason.TOOL_USE,
+                content=(
+                    ToolUseBlock(
+                        tool_use_id="toolu-api-complete",
+                        name="task_complete",
+                        input={"task_id": api_task.task_id},
+                    ),
+                ),
+            ),
+            ModelResponse.text_completion("登录 API 已实现并验证。"),
+            ModelResponse.text_completion("已收到两个自主任务结果。"),
+        )
+    )
+    registry = create_tool_registry(workspace, task_service=task_service)
+    loop = MinimalAgentLoop(repository, model, registry)
+    thread_factory = InlineTeamThreadFactory()
+    capability = register_cli_team_capability(
+        workspace=workspace,
+        registry=registry,
+        repository=repository,
+        loop=loop,
+        execution_gate=LockCronExecutionGate(),
+        task_service=task_service,
+        waiter=StopAfterFirstTeamWait(),
+        thread_factory=thread_factory,  # type: ignore[arg-type]
+    )
+    context = ToolExecutionContext(
+        session_id=lead_session.session_id,
+        run_id="run-lead",
+        step_id="step-team",
+        call_id="call-team",
+    )
+    created = registry.get("create_team").run(
+        {
+            "workspace_id": str(workspace),
+            "lead_name": "lead",
+            "lead_role": "协调者",
+        },
+        context=context,
+    )
+    team_id = created["team"]["team_id"]  # type: ignore[index]
+    lead_member_id = created["lead"]["member_id"]  # type: ignore[index]
+    alice = registry.get("add_teammate").run(
+        {
+            "team_id": team_id,
+            "lead_member_id": lead_member_id,
+            "name": "alice",
+            "role": "数据库开发",
+            "session_id": alice_session.session_id,
+        },
+        context=context,
+    )
+
+    assert task_service.get_task(schema_task.task_id).status is TaskStatus.COMPLETED
+    assert task_service.get_task(schema_task.task_id).owner == alice["member_id"]
+
+    bob = registry.get("add_teammate").run(
+        {
+            "team_id": team_id,
+            "lead_member_id": lead_member_id,
+            "name": "bob",
+            "role": "接口开发",
+            "session_id": bob_session.session_id,
+        },
+        context=context,
+    )
+
+    assert task_service.get_task(api_task.task_id).status is TaskStatus.COMPLETED
+    assert task_service.get_task(api_task.task_id).owner == bob["member_id"]
+    lead_messages = JsonFileTeamInboxRepository(
+        workspace / "var" / "state" / "teams"
+    ).list_unread(team_id=team_id, recipient_member_id=lead_member_id)
+    assert len(lead_messages) == 2
+    assert all(message.message_type is TeamMessageType.RESULT for message in lead_messages)
+    assert all("[Team 自主任务结果]" in message.content for message in lead_messages)
+
+    assert capability._lead_runners[lead_member_id].process_once() is True
+    assert [request.session_id for request in model.requests] == [
+        alice_session.session_id,
+        alice_session.session_id,
+        bob_session.session_id,
+        bob_session.session_id,
+        lead_session.session_id,
+    ]
     capability.stop()
 
 

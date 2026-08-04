@@ -149,6 +149,8 @@ def test_cli_assembler_requires_all_team_tools_before_loading_guidance(tmp_path)
 
     assert TEAM_SYSTEM_PROMPT not in incomplete_prompt  # type: ignore[operator]
     assert TEAM_SYSTEM_PROMPT in complete_prompt  # type: ignore[operator]
+    assert "自主发现和认领" in complete_prompt  # type: ignore[operator]
+    assert "显式 Team 工作分配" in complete_prompt  # type: ignore[operator]
 
 
 def test_cli_assembler_skips_unavailable_capability_guidance(tmp_path) -> None:
