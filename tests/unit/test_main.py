@@ -1,5 +1,6 @@
 from datetime import datetime, timezone
 from pathlib import Path
+import subprocess
 from threading import Event
 
 from local_dev_agent.background_tasks import (
@@ -24,6 +25,7 @@ from local_dev_agent.main import execute_prompt
 from local_dev_agent.main import register_cli_background_task_capability
 from local_dev_agent.main import register_cli_cron_capability
 from local_dev_agent.main import register_cli_team_capability
+from local_dev_agent.main import register_cli_worktree_capability
 from local_dev_agent.models.fake import FakeModel
 from local_dev_agent.models import DeepSeekSettings
 from local_dev_agent.context import ContextInputSnapshot, ContextManager
@@ -59,6 +61,7 @@ from local_dev_agent.teams import (
 from local_dev_agent.subagents import SubagentPolicy, SubagentToolRegistryFactory
 from local_dev_agent.tools import ToolCallRequest, ToolExecutionContext
 from local_dev_agent.tools.builtin import TaskTool
+from local_dev_agent.tools.workspace import InMemoryRunWorkingDirectoryRegistry
 
 
 def test_execute_prompt_connects_input_service_to_agent_loop(tmp_path) -> None:
@@ -1039,3 +1042,141 @@ def test_cli_skill_tool_result_is_returned_to_the_next_parent_model_request(tmp_
     assert follow_up_request.conversation[2].content[0].content["content"] == (
         "---\nname: code-review\n---\n# 完整技能正文\n"
     )
+
+
+def test_cli_worktree_capability_binds_task_and_isolates_autonomous_member_run(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    for command in (
+        ("git", "init"),
+        ("git", "config", "user.email", "test@example.com"),
+        ("git", "config", "user.name", "测试用户"),
+    ):
+        subprocess.run(command, cwd=workspace, check=True, capture_output=True, text=True)
+    (workspace / "README.md").write_text("主工作区", encoding="utf-8")
+    subprocess.run(("git", "add", "README.md"), cwd=workspace, check=True, capture_output=True)
+    subprocess.run(
+        ("git", "commit", "-m", "初始化"),
+        cwd=workspace,
+        check=True,
+        capture_output=True,
+    )
+    state_root = workspace / "var" / "state"
+    repository = JsonFileStateRepository(state_root)
+    lead_session = SessionState.create(
+        session_id="session-lead",
+        tenant_id="local",
+        user_id="local",
+        project_id=str(workspace),
+    )
+    alice_session = SessionState.create(
+        session_id="session-alice",
+        tenant_id="local",
+        user_id="local",
+        project_id=str(workspace),
+    )
+    repository.save_session(lead_session)
+    repository.save_session(alice_session)
+    task_service = create_task_service(workspace)
+    task = task_service.create_task(subject="实现登录 API")
+    run_directories = InMemoryRunWorkingDirectoryRegistry(main_workspace=workspace)
+    registry = create_tool_registry(
+        workspace,
+        task_service=task_service,
+        working_directory_resolver=run_directories,
+    )
+    worktree_capability = register_cli_worktree_capability(
+        workspace=workspace,
+        registry=registry,
+        task_service=task_service,
+        run_working_directory_registry=run_directories,
+    )
+    cwd_before = Path.cwd()
+    created = registry.get("create_worktree").run(
+        {"name": "api-login", "task_id": task.task_id},
+        context=ToolExecutionContext(
+            session_id=lead_session.session_id,
+            run_id="run-lead",
+            step_id="step-worktree",
+            call_id="call-worktree",
+        ),
+    )
+    assert Path.cwd() == cwd_before
+    assert created["worktree"]["directory"] == str(
+        (workspace / ".worktrees" / "api-login").resolve()
+    )
+    bound_task = task_service.get_task(task.task_id)
+    assert bound_task.worktree == "api-login"
+    assert bound_task.status is TaskStatus.PENDING
+    assert bound_task.owner is None
+
+    model = ScriptedModel(
+        (
+            ModelResponse(
+                stop_reason=StopReason.TOOL_USE,
+                content=(
+                    ToolUseBlock(
+                        tool_use_id="toolu-write-login",
+                        name="write_file",
+                        input={"path": "src/login.py", "content": "登录实现"},
+                    ),
+                ),
+            ),
+            ModelResponse(
+                stop_reason=StopReason.TOOL_USE,
+                content=(
+                    ToolUseBlock(
+                        tool_use_id="toolu-complete-login",
+                        name="task_complete",
+                        input={"task_id": task.task_id},
+                    ),
+                ),
+            ),
+            ModelResponse.text_completion("登录 API 已完成。"),
+        )
+    )
+    loop = MinimalAgentLoop(repository, model, registry)
+    team_capability = register_cli_team_capability(
+        workspace=workspace,
+        registry=registry,
+        repository=repository,
+        loop=loop,
+        execution_gate=LockCronExecutionGate(),
+        task_service=task_service,
+        worktree_directory_resolver=worktree_capability.directory_resolver,
+        run_working_directory_registry=worktree_capability.run_working_directory_registry,
+        waiter=StopAfterFirstTeamWait(),
+        thread_factory=InlineTeamThreadFactory(),  # type: ignore[arg-type]
+    )
+    context = ToolExecutionContext(
+        session_id=lead_session.session_id,
+        run_id="run-lead",
+        step_id="step-team",
+        call_id="call-team",
+    )
+    created_team = registry.get("create_team").run(
+        {"workspace_id": str(workspace), "lead_name": "lead", "lead_role": "协调"},
+        context=context,
+    )
+    registry.get("add_teammate").run(
+        {
+            "team_id": created_team["team"]["team_id"],
+            "lead_member_id": created_team["lead"]["member_id"],
+            "name": "alice",
+            "role": "开发",
+            "session_id": alice_session.session_id,
+        },
+        context=context,
+    )
+
+    assert (workspace / ".worktrees" / "api-login" / "src" / "login.py").read_text(
+        encoding="utf-8"
+    ) == "登录实现"
+    assert not (workspace / "src" / "login.py").exists()
+    completed_task = task_service.get_task(task.task_id)
+    assert completed_task.status is TaskStatus.COMPLETED
+    assert completed_task.owner is not None
+    assert Path.cwd() == cwd_before
+    team_capability.stop()

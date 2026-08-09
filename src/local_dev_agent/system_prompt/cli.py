@@ -47,6 +47,9 @@ TEAM_SYSTEM_PROMPT = """需要长期协作而非一次性同步委派时，可�
 
 持久项目任务图中未认领且依赖已满足的工作，会由空闲成员自主发现和认领；成员完成实际工作并完成任务状态更新后，结果会回传 Lead。临时、任务图之外或必须指定某位成员的工作，仍使用显式 Team 工作分配。消息会持久保存在成员收件箱中，关闭请求优先于自主认领。成员 Runner 仅在本进程运行期间处理消息，应用关闭期间不会自动执行或完成工作。只向已知且属于同一 Team 的成员派活或发消息。"""
 
+WORKTREE_ISOLATION_SYSTEM_PROMPT = """任务图决定“谁做什么”，工作树决定“在哪里做什么”。
+Lead 可以为尚未认领的项目任务创建并绑定独立工作树；绑定不会认领任务、设置 owner 或改变任务状态。成员自主认领已绑定任务后，其文件读写和命令执行会在该工作树中进行；未绑定任务仍在主工作区执行。工作树名称必须使用受控的单目录名称。完成后由 Lead 决定保留或删除工作树；删除前应先确认没有未提交改动或未推送提交，只有明确愿意放弃改动时才使用 discard_changes=true。不要假设创建、保留或删除工作树会自动完成、释放或转交任务。"""
+
 _CLI_SKILL_CATALOG_INSTRUCTION = "需要某项技能的完整说明时，使用已声明的技能加载工具。"
 
 
@@ -143,6 +146,19 @@ def create_cli_system_prompt_assembler(
                         "add_teammate",
                         "assign_team_work",
                         "send_team_message",
+                    )
+                )
+                else None,
+            ),
+            SystemPromptSection(
+                "worktree_isolation",
+                lambda context: WORKTREE_ISOLATION_SYSTEM_PROMPT
+                if all(
+                    context.has_tool(tool_name)
+                    for tool_name in (
+                        "create_worktree",
+                        "keep_worktree",
+                        "remove_worktree",
                     )
                 )
                 else None,

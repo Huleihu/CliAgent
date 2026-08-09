@@ -11,6 +11,7 @@ from local_dev_agent.system_prompt import (
     TASK_DELEGATION_SYSTEM_PROMPT,
     TASK_SYSTEM_PROMPT,
     TEAM_SYSTEM_PROMPT,
+    WORKTREE_ISOLATION_SYSTEM_PROMPT,
     TODO_PLANNING_SYSTEM_PROMPT,
     create_cli_system_prompt_assembler,
     create_cli_system_prompt_context,
@@ -151,6 +152,31 @@ def test_cli_assembler_requires_all_team_tools_before_loading_guidance(tmp_path)
     assert TEAM_SYSTEM_PROMPT in complete_prompt  # type: ignore[operator]
     assert "自主发现和认领" in complete_prompt  # type: ignore[operator]
     assert "显式 Team 工作分配" in complete_prompt  # type: ignore[operator]
+
+
+def test_cli_assembler_requires_all_worktree_tools_before_loading_guidance(tmp_path) -> None:
+    assembler = create_cli_system_prompt_assembler(_catalog())
+
+    incomplete_prompt = assembler.get(
+        create_cli_system_prompt_context(
+            workspace=tmp_path,
+            registry=_registry("create_worktree", "keep_worktree"),
+        )
+    )
+    complete_prompt = assembler.get(
+        create_cli_system_prompt_context(
+            workspace=tmp_path,
+            registry=_registry(
+                "create_worktree",
+                "keep_worktree",
+                "remove_worktree",
+            ),
+        )
+    )
+
+    assert WORKTREE_ISOLATION_SYSTEM_PROMPT not in incomplete_prompt  # type: ignore[operator]
+    assert WORKTREE_ISOLATION_SYSTEM_PROMPT in complete_prompt  # type: ignore[operator]
+    assert "任务图决定“谁做什么”" in complete_prompt  # type: ignore[operator]
 
 
 def test_cli_assembler_skips_unavailable_capability_guidance(tmp_path) -> None:

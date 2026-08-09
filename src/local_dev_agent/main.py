@@ -93,6 +93,13 @@ from local_dev_agent.tasks import (
     TaskService,
     UuidTaskIdGenerator,
 )
+from local_dev_agent.worktrees import WorktreeService
+from local_dev_agent.worktrees.adapters import (
+    FilesystemWorktreeRunDirectoryResolver,
+    GitWorktreeLifecycleGateway,
+    JsonlWorktreeEventJournal,
+    UtcWorktreeClock,
+)
 from local_dev_agent.teams import (
     DaemonTeamThreadFactory,
     EventTeamDispatcher,
@@ -122,6 +129,8 @@ from local_dev_agent.teams import (
 )
 from local_dev_agent.todos import JsonFileTodoRepository, TodoReminderPolicy
 from local_dev_agent.tools import ToolRegistry
+from local_dev_agent.tools.ports import RunWorkingDirectoryRegistry, ToolWorkingDirectoryResolver
+from local_dev_agent.tools.workspace import InMemoryRunWorkingDirectoryRegistry
 from local_dev_agent.tools.builtin import (
     BashTool,
     CompactContextTool,
@@ -133,6 +142,8 @@ from local_dev_agent.tools.builtin import (
     ScheduleCronTool,
     ListCronsTool,
     CancelCronTool,
+    CreateWorktreeTool,
+    KeepWorktreeTool,
     TaskTool,
     TaskClaimTool,
     TaskCompleteTool,
@@ -144,6 +155,7 @@ from local_dev_agent.tools.builtin import (
     CreateTeamTool,
     RequestTeamShutdownTool,
     SendTeamMessageTool,
+    RemoveWorktreeTool,
     TodoWriteTool,
     WriteFileTool,
 )
@@ -214,6 +226,15 @@ class CliTeamCapability:
             runner.stop()
 
 
+@dataclass(frozen=True, slots=True)
+class CliWorktreeCapability:
+    """CLI 共享的 S18 服务、目录解析器与 Run 目录注册表。"""
+
+    service: WorktreeService
+    directory_resolver: FilesystemWorktreeRunDirectoryResolver
+    run_working_directory_registry: RunWorkingDirectoryRegistry
+
+
 def execute_prompt(
     *,
     prompt: str,
@@ -233,14 +254,23 @@ def create_tool_registry(
     *,
     skill_catalog: SkillCatalog | None = None,
     task_service: TaskService | None = None,
+    working_directory_resolver: ToolWorkingDirectoryResolver | None = None,
 ) -> ToolRegistry:
     """组装 CLI 默认可用的低风险工具，避免入口直接依赖工具细节。"""
 
     registry = ToolRegistry()
-    registry.register(ListFilesTool(workspace))
-    registry.register(ReadFileTool(workspace))
-    registry.register(WriteFileTool(workspace))
-    registry.register(EditFileTool(workspace))
+    registry.register(
+        ListFilesTool(workspace, working_directory_resolver=working_directory_resolver)
+    )
+    registry.register(
+        ReadFileTool(workspace, working_directory_resolver=working_directory_resolver)
+    )
+    registry.register(
+        WriteFileTool(workspace, working_directory_resolver=working_directory_resolver)
+    )
+    registry.register(
+        EditFileTool(workspace, working_directory_resolver=working_directory_resolver)
+    )
     registry.register(CompactContextTool())
     registry.register(
         ReadArtifactTool(FileSystemToolResultArtifactStore(workspace / "var" / "artifacts"))
@@ -275,6 +305,7 @@ def register_cli_background_task_capability(
     repository: BackgroundTaskRepository | None = None,
     id_generator: BackgroundTaskIdGenerator | None = None,
     command_runner: CommandRunner | None = None,
+    working_directory_resolver: ToolWorkingDirectoryResolver | None = None,
 ) -> BackgroundTaskNotificationSource:
     """组装父侧后台命令能力，并让工具与通知共享同一进程内仓储。"""
 
@@ -301,6 +332,7 @@ def register_cli_background_task_capability(
             workspace,
             active_command_runner,
             service,
+            working_directory_resolver=working_directory_resolver,
         )
     )
     return BackgroundTaskNotificationSource(active_repository)
@@ -398,6 +430,8 @@ def register_cli_team_capability(
     loop: MinimalAgentLoop,
     execution_gate: TeamExecutionGate,
     task_service: TaskService | None = None,
+    worktree_directory_resolver: FilesystemWorktreeRunDirectoryResolver | None = None,
+    run_working_directory_registry: RunWorkingDirectoryRegistry | None = None,
     clock: SystemTeamClock | None = None,
     waiter: TeamWaiter | None = None,
     thread_factory: TeamThreadFactory | None = None,
@@ -437,6 +471,7 @@ def register_cli_team_capability(
     executor = RuntimeTeamAgentExecutor(
         runtime_service=UserInputRuntimeService(repository),
         loop=loop,
+        run_working_directory_registry=run_working_directory_registry,
     )
     active_waiter = waiter if waiter is not None else EventTeamWaiter()
     active_thread_factory = (
@@ -475,6 +510,7 @@ def register_cli_team_capability(
             autonomous_work_source=autonomous_work_source,
             autonomous_work_verifier=autonomous_work_verifier,
             autonomous_result_reporter=autonomous_result_reporter,
+            autonomous_worktree_directory_resolver=worktree_directory_resolver,
         )
 
     def print_lead_response(execution: TeamPromptExecution) -> None:
@@ -504,6 +540,53 @@ def register_cli_team_capability(
     registry.register(SendTeamMessageTool(service))
     registry.register(RequestTeamShutdownTool(service))
     return capability
+
+
+def register_cli_worktree_capability(
+    *,
+    workspace: Path,
+    registry: ToolRegistry,
+    task_service: TaskService,
+    run_working_directory_registry: RunWorkingDirectoryRegistry,
+) -> CliWorktreeCapability:
+    """装配 Lead 工作树工具和成员 Run 共用的目录隔离依赖。"""
+
+    if not isinstance(workspace, Path):
+        raise TypeError("workspace 必须是 Path 对象。")
+    if not isinstance(registry, ToolRegistry):
+        raise TypeError("registry 必须是 ToolRegistry 对象。")
+    if not all(callable(getattr(task_service, method_name, None)) for method_name in ("get_task", "bind_worktree")):
+        raise TypeError("task_service 必须提供 get_task 和 bind_worktree 方法。")
+    if not all(
+        callable(getattr(run_working_directory_registry, method_name, None))
+        for method_name in ("bind", "release", "resolve")
+    ):
+        raise TypeError("run_working_directory_registry 必须提供 bind、release 和 resolve 方法。")
+    worktrees_directory = workspace / ".worktrees"
+    service = WorktreeService(
+        lifecycle_gateway=GitWorktreeLifecycleGateway(
+            workspace,
+            worktrees_directory=worktrees_directory,
+        ),
+        event_journal=JsonlWorktreeEventJournal(
+            workspace / "var" / "state" / "worktrees" / "events.jsonl"
+        ),
+        clock=UtcWorktreeClock(),
+        task_reader=task_service,
+        task_binder=task_service,
+    )
+    directory_resolver = FilesystemWorktreeRunDirectoryResolver(
+        main_workspace=workspace,
+        worktrees_directory=worktrees_directory,
+    )
+    registry.register(CreateWorktreeTool(service))
+    registry.register(RemoveWorktreeTool(service))
+    registry.register(KeepWorktreeTool(service))
+    return CliWorktreeCapability(
+        service=service,
+        directory_resolver=directory_resolver,
+        run_working_directory_registry=run_working_directory_registry,
+    )
 
 
 def create_permission_hook_runner(workspace: Path) -> HookRunner:
@@ -646,14 +729,25 @@ def main() -> None:
     model: ModelClient = DeepSeekAnthropicModelClient(settings)
     skill_catalog = FileSystemSkillCatalogLoader(workspace).load()
     task_service = create_task_service(workspace)
+    run_working_directory_registry = InMemoryRunWorkingDirectoryRegistry(
+        main_workspace=workspace
+    )
     tool_registry = create_tool_registry(
         workspace,
         skill_catalog=skill_catalog,
         task_service=task_service,
+        working_directory_resolver=run_working_directory_registry,
     )
     background_task_notifications = register_cli_background_task_capability(
         workspace=workspace,
         registry=tool_registry,
+        working_directory_resolver=run_working_directory_registry,
+    )
+    worktree_capability = register_cli_worktree_capability(
+        workspace=workspace,
+        registry=tool_registry,
+        task_service=task_service,
+        run_working_directory_registry=run_working_directory_registry,
     )
     hook_runner = create_permission_hook_runner(workspace)
     subagent_runner = create_subagent_runner(
@@ -711,6 +805,8 @@ def main() -> None:
         loop=loop,
         execution_gate=execution_gate,
         task_service=task_service,
+        worktree_directory_resolver=worktree_capability.directory_resolver,
+        run_working_directory_registry=worktree_capability.run_working_directory_registry,
     )
     cron_capability.start()
 

@@ -4,7 +4,7 @@ from .discovery import ToolDiscovery
 from .executor import ToolExecutor
 from .fake import FakeTool
 from .function_tool import FunctionTool
-from .ports import Tool
+from .ports import RunWorkingDirectoryRegistry, Tool, ToolWorkingDirectoryResolver
 from .registry import ToolRegistry
 from .schema import (
     CONTEXT_COMPACTION_TOOL_TAG,
@@ -21,6 +21,8 @@ __all__ = [
     "CONTEXT_COMPACTION_TOOL_TAG",
     "DELEGATION_TOOL_TAG",
     "Tool",
+    "RunWorkingDirectoryRegistry",
+    "ToolWorkingDirectoryResolver",
     "ToolCallRequest",
     "ToolCallResult",
     "ToolDefinition",
