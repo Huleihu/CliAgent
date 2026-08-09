@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from threading import RLock
 
 from local_dev_agent.mcp.errors import McpConnectionError, McpToolCallError
 from local_dev_agent.mcp.ports import McpCallContext, McpCallResult, McpClient
 from local_dev_agent.mcp.schema import (
     McpServerConfiguration,
+    McpToolAnnotations,
     McpToolDefinition,
     build_mcp_tool_name,
     validate_unique_mcp_tool_names,
@@ -31,7 +33,10 @@ class McpToolAdapter(Tool):
         self._external_tool_name = external_tool.name
         self._definition = ToolDefinition(
             name=build_mcp_tool_name(server.name, external_tool.name),
-            description=f"MCP 服务“{server.name}”提供的工具：{external_tool.description}",
+            description=(
+                f"MCP 服务“{server.name}”提供的工具：{external_tool.description}。"
+                f"风险提示：{_format_annotations(external_tool.annotations)}"
+            ),
             parameters=external_tool.input_schema,
             tags=("mcp",),
         )
@@ -84,6 +89,8 @@ class ToolRegistryMcpToolPool:
         if not isinstance(registry, ToolRegistry):
             raise TypeError("registry 必须是 ToolRegistry。")
         self._registry = registry
+        self._tools_by_public_name: dict[str, McpToolDefinition] = {}
+        self._lock = RLock()
 
     def register(
         self,
@@ -102,7 +109,21 @@ class ToolRegistryMcpToolPool:
             raise McpConnectionError(
                 f"MCP Server “{server.name}”的工具名称与现有工具冲突：{error}"
             ) from error
+        with self._lock:
+            self._tools_by_public_name.update(
+                {
+                    adapter.definition.name: tool
+                    for adapter, tool in zip(adapters, tools, strict=True)
+                }
+            )
         return public_names
+
+    def get_annotations(self, public_tool_name: str) -> McpToolAnnotations | None:
+        """返回已注册外部工具的风险提示；注册竞争窗口按未知工具处理。"""
+
+        with self._lock:
+            tool = self._tools_by_public_name.get(public_tool_name)
+        return tool.annotations if tool is not None else None
 
 
 def _to_mcp_context(context: ToolExecutionContext | None) -> McpCallContext:
@@ -114,3 +135,12 @@ def _to_mcp_context(context: ToolExecutionContext | None) -> McpCallContext:
         step_id=context.step_id,
         call_id=context.call_id,
     )
+
+
+def _format_annotations(annotations: McpToolAnnotations) -> str:
+    """将已校验但并非权限证明的 annotations 显式暴露给模型。"""
+
+    parts = ["声明只读" if annotations.read_only_hint else "未声明只读"]
+    parts.append("可能有破坏性影响" if annotations.destructive_hint else "未声明破坏性影响")
+    parts.append("可能访问外部系统" if annotations.open_world_hint else "不访问外部系统")
+    return "；".join(parts) + "。"

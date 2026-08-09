@@ -5,7 +5,7 @@ import unittest
 from local_dev_agent.mcp.adapters.fake import FakeMcpClient, FakeMcpClientConnector, InMemoryMcpServerCatalog
 from local_dev_agent.mcp.adapters.tool_registry import ToolRegistryMcpToolPool
 from local_dev_agent.mcp.ports import McpCallResult
-from local_dev_agent.mcp.schema import McpServerConfiguration, McpToolDefinition
+from local_dev_agent.mcp.schema import McpServerConfiguration, McpToolAnnotations, McpToolDefinition
 from local_dev_agent.mcp.service import McpConnectionService
 from local_dev_agent.tools import ToolCallRequest, ToolExecutionContext, ToolExecutor, ToolRegistry
 from local_dev_agent.tools.builtin import ConnectMcpTool
@@ -78,6 +78,31 @@ class McpToolAdapterTests(unittest.TestCase):
         self.assertTrue(result.success)
         self.assertTrue(result.data["is_error"])
         self.assertIn("报告执行失败", result.data["diagnostic"])
+
+    def test_工具描述会暴露已校验的风险提示(self) -> None:
+        self.search = McpToolDefinition(
+            "search",
+            "搜索项目文档",
+            {"type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"]},
+            annotations=McpToolAnnotations(
+                read_only_hint=True,
+                destructive_hint=False,
+                open_world_hint=False,
+            ),
+        )
+        registry, _client = self._connected_registry(
+            {"search": lambda _arguments, _context: McpCallResult(content=({"type": "text", "text": "ok"},))}
+        )
+        executor = ToolExecutor(registry)
+
+        executor.execute(
+            ToolCallRequest(name="connect_mcp", arguments={"name": "docs"}, call_id="call-1"),
+            context=self.context,
+        )
+
+        description = registry.get("mcp__docs__search").definition.description
+        self.assertIn("声明只读", description)
+        self.assertIn("未声明破坏性影响", description)
 
     def test_mcp工具缺少call_id会被本地边界拒绝(self) -> None:
         registry, _client = self._connected_registry(

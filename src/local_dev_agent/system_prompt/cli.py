@@ -50,7 +50,25 @@ TEAM_SYSTEM_PROMPT = """需要长期协作而非一次性同步委派时，可�
 WORKTREE_ISOLATION_SYSTEM_PROMPT = """任务图决定“谁做什么”，工作树决定“在哪里做什么”。
 Lead 可以为尚未认领的项目任务创建并绑定独立工作树；绑定不会认领任务、设置 owner 或改变任务状态。成员自主认领已绑定任务后，其文件读写和命令执行会在该工作树中进行；未绑定任务仍在主工作区执行。工作树名称必须使用受控的单目录名称。完成后由 Lead 决定保留或删除工作树；删除前应先确认没有未提交改动或未推送提交，只有明确愿意放弃改动时才使用 discard_changes=true。不要假设创建、保留或删除工作树会自动完成、释放或转交任务。"""
 
+MCP_PLUGIN_SYSTEM_PROMPT = """可通过 connect_mcp 连接已配置的外部 MCP Server，并先等待 tools/list 发现的工具出现在下一轮工具池中。外部工具统一使用 mcp__<server>__<tool> 名称，例如 mcp__docs__search 用于检索文档，mcp__jira__create_issue 可能会创建外部工单。调用前核对参数和目标；MCP annotations 只是提示，外部调用仍需要权限确认。不要把 MCP 工具委派给 S6 子 Agent 或 Team 成员。"""
+
 _CLI_SKILL_CATALOG_INSTRUCTION = "需要某项技能的完整说明时，使用已声明的技能加载工具。"
+
+
+def _mcp_plugin_system_prompt(context: SystemPromptContext) -> str | None:
+    """仅在连接能力存在时提示 MCP，并列出当前轮真正可用的外部工具。"""
+
+    if not context.has_tool("connect_mcp"):
+        return None
+    external_tool_names = tuple(
+        name for name in context.enabled_tool_names if name.startswith("mcp__")
+    )
+    if not external_tool_names:
+        return MCP_PLUGIN_SYSTEM_PROMPT
+    return (
+        f"{MCP_PLUGIN_SYSTEM_PROMPT}\n"
+        f"当前已连接并可调用的 MCP 工具：{'、'.join(external_tool_names)}。"
+    )
 
 
 def create_cli_system_prompt_context(
@@ -163,6 +181,7 @@ def create_cli_system_prompt_assembler(
                 )
                 else None,
             ),
+            SystemPromptSection("mcp_plugin", _mcp_plugin_system_prompt),
             SystemPromptSection(
                 "skills",
                 lambda context: skill_catalog_prompt

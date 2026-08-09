@@ -8,6 +8,7 @@ from local_dev_agent.system_prompt import (
     CRON_SCHEDULER_SYSTEM_PROMPT,
     CLI_IDENTITY_SYSTEM_PROMPT,
     CONTEXT_COMPACTION_SYSTEM_PROMPT,
+    MCP_PLUGIN_SYSTEM_PROMPT,
     TASK_DELEGATION_SYSTEM_PROMPT,
     TASK_SYSTEM_PROMPT,
     TEAM_SYSTEM_PROMPT,
@@ -177,6 +178,32 @@ def test_cli_assembler_requires_all_worktree_tools_before_loading_guidance(tmp_p
     assert WORKTREE_ISOLATION_SYSTEM_PROMPT not in incomplete_prompt  # type: ignore[operator]
     assert WORKTREE_ISOLATION_SYSTEM_PROMPT in complete_prompt  # type: ignore[operator]
     assert "任务图决定“谁做什么”" in complete_prompt  # type: ignore[operator]
+
+
+def test_cli_provider_refreshes_mcp_guidance_and_discovered_tool_names(tmp_path) -> None:
+    registry = _registry("connect_mcp")
+    provider = create_cli_system_prompt_provider(
+        workspace=tmp_path,
+        registry=registry,
+        skill_catalog=_catalog(),
+    )
+
+    before_connection = provider.get_system_prompt()
+    registry.register(
+        FakeTool(
+            definition=ToolDefinition(
+                name="mcp__docs__search",
+                description="搜索文档。",
+                parameters={"type": "object", "properties": {}},
+            ),
+            result={},
+        )
+    )
+    after_connection = provider.get_system_prompt()
+
+    assert MCP_PLUGIN_SYSTEM_PROMPT in before_connection  # type: ignore[operator]
+    assert "当前已连接并可调用的 MCP 工具" not in before_connection  # type: ignore[operator]
+    assert "mcp__docs__search" in after_connection  # type: ignore[operator]
 
 
 def test_cli_assembler_skips_unavailable_capability_guidance(tmp_path) -> None:

@@ -9,6 +9,7 @@ from local_dev_agent.hooks import (
     HookRunner,
 )
 from local_dev_agent.permissions import (
+    McpPermissionPolicy,
     PermissionContext,
     PermissionDecision,
     PermissionHook,
@@ -16,6 +17,7 @@ from local_dev_agent.permissions import (
     SimplePermissionPolicy,
     ask_user,
 )
+from local_dev_agent.mcp import McpToolAnnotations
 from local_dev_agent.tools import (
     FakeTool,
     ToolCallRequest,
@@ -142,6 +144,92 @@ def test_simple_policy_asks_before_writing_outside_workspace(
 
     assert result.decision is PermissionDecision.DENY
     assert reasons == ["工具将写入工作区之外。"]
+
+
+class _McpAnnotationsCatalog:
+    def __init__(self, annotations: dict[str, McpToolAnnotations]) -> None:
+        self._annotations = annotations
+
+    def get_annotations(self, public_tool_name: str) -> McpToolAnnotations | None:
+        return self._annotations.get(public_tool_name)
+
+
+def test_mcp_policy_requires_confirmation_for_connect_and_external_tools(tmp_path: Path) -> None:
+    reasons: list[str] = []
+    policy = McpPermissionPolicy(
+        SimplePermissionPolicy(tmp_path),
+        _McpAnnotationsCatalog(
+            {
+                "mcp__docs__search": McpToolAnnotations(
+                    read_only_hint=True,
+                    destructive_hint=False,
+                    open_world_hint=False,
+                ),
+                "mcp__jira__create_issue": McpToolAnnotations(
+                    destructive_hint=True,
+                    open_world_hint=True,
+                ),
+            }
+        ),
+        approval_prompt=lambda _context, reason: reasons.append(reason) or False,
+    )
+
+    connect_result = policy.check(_context("connect_mcp", {"name": "docs"}))
+    docs_result = policy.check(_context("mcp__docs__search", {"query": "S19"}))
+    jira_result = policy.check(
+        _context("mcp__jira__create_issue", {"summary": "修复登录"})
+    )
+    local_result = policy.check(_context("read_file", {"path": "README.md"}))
+
+    assert all(
+        result.decision is PermissionDecision.DENY
+        for result in (connect_result, docs_result, jira_result)
+    )
+    assert local_result == PermissionResult.allow()
+    assert "加入当前 Lead 工具池" in reasons[0]
+    assert "声明为只读操作" in reasons[1]
+    assert "可能执行破坏性操作" in reasons[2]
+    assert "可能访问或影响外部系统" in reasons[2]
+
+
+def test_mcp_policy_blocks_external_tool_through_existing_permission_hook(tmp_path: Path) -> None:
+    tool = FakeTool(
+        definition=ToolDefinition(
+            name="mcp__jira__create_issue",
+            description="创建外部工单。",
+            parameters={"type": "object", "properties": {}},
+        ),
+        result={},
+    )
+    registry = ToolRegistry()
+    registry.register(tool)
+    hooks = HookRegistry()
+    hooks.register(
+        HookEvent.PRE_TOOL_USE,
+        PermissionHook(
+            McpPermissionPolicy(
+                SimplePermissionPolicy(tmp_path),
+                _McpAnnotationsCatalog(
+                    {"mcp__jira__create_issue": McpToolAnnotations(destructive_hint=True)}
+                ),
+                approval_prompt=lambda _context, _reason: False,
+            )
+        ),
+    )
+
+    result = ToolExecutor(registry, hook_runner=HookRunner(hooks)).execute(
+        ToolCallRequest(name="mcp__jira__create_issue", arguments={}, call_id="toolu-1"),
+        context=ToolExecutionContext(
+            session_id="session-1",
+            run_id="run-1",
+            step_id="step-1",
+            call_id="toolu-1",
+        ),
+    )
+
+    assert result.success is False
+    assert result.error["type"] == "ToolHookBlockedError"  # type: ignore[index]
+    assert tool.calls == []
 
 
 def test_permission_hook_blocks_tool_execution_when_user_denies(

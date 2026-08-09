@@ -14,6 +14,7 @@ from local_dev_agent.mcp.ports import (
     McpClient,
     McpClientConnector,
     McpServerCatalog,
+    McpToolAnnotationsCatalog,
     McpToolPool,
 )
 from local_dev_agent.mcp.schema import (
@@ -34,6 +35,7 @@ __all__ = [
     "McpServerCatalog",
     "McpServerConfiguration",
     "McpToolAnnotations",
+    "McpToolAnnotationsCatalog",
     "McpToolCallError",
     "McpToolDefinition",
     "McpToolDefinitionError",

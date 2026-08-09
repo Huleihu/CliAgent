@@ -4,9 +4,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import json
-from typing import Mapping, Protocol, Sequence
+from typing import Mapping, Protocol, Sequence, runtime_checkable
 
-from local_dev_agent.mcp.schema import McpServerConfiguration, McpToolDefinition
+from local_dev_agent.mcp.schema import (
+    McpServerConfiguration,
+    McpToolAnnotations,
+    McpToolDefinition,
+)
 
 
 @dataclass(frozen=True)
@@ -106,6 +110,14 @@ class McpToolPool(Protocol):
         tools: Sequence[McpToolDefinition],
     ) -> tuple[str, ...]:
         """原子注册工具，并返回暴露给模型的稳定公开名称。"""
+
+
+@runtime_checkable
+class McpToolAnnotationsCatalog(Protocol):
+    """向权限策略提供已注册 MCP 工具的风险提示，缺失时必须保守处理。"""
+
+    def get_annotations(self, public_tool_name: str) -> McpToolAnnotations | None:
+        """返回工具的已校验标注；未知名称返回空值。"""
 
 
 def _copy_json_mapping(value: Mapping[str, object], *, field_name: str) -> Mapping[str, object]:
