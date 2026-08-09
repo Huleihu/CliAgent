@@ -226,6 +226,25 @@ def test_registry_rejects_duplicate_names_and_filters_definitions() -> None:
     assert registry.list_definitions(tags=("network",)) == ()
 
 
+def test_registry_batch_registration_is_atomic_when_one_name_conflicts() -> None:
+    registry = ToolRegistry()
+    existing_tool = FakeTool(definition=_read_definition(), result={})
+    registry.register(existing_tool)
+    new_tool = FakeTool(
+        definition=ToolDefinition(
+            name="search_files",
+            description="搜索文件。",
+            parameters={"type": "object", "properties": {}},
+        ),
+        result={},
+    )
+
+    with pytest.raises(ToolAlreadyExistsError, match="不能重复注册"):
+        registry.register_many((new_tool, existing_tool))
+
+    assert [definition.name for definition in registry.list_definitions()] == ["read_file"]
+
+
 def test_call_contract_freezes_top_level_mappings() -> None:
     arguments = {"path": "README.md"}
     request = ToolCallRequest(name="read_file", arguments=arguments)

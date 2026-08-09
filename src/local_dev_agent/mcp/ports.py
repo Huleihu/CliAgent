@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
 from typing import Mapping, Protocol, Sequence
 
 from local_dev_agent.mcp.schema import McpServerConfiguration, McpToolDefinition
@@ -43,6 +44,20 @@ class McpCallResult:
             raise ValueError("MCP 工具结果 structured_content 必须是对象或空值。")
         if not isinstance(self.is_error, bool):
             raise ValueError("MCP 工具结果 is_error 必须是布尔值。")
+        object.__setattr__(
+            self,
+            "content",
+            tuple(_copy_json_mapping(item, field_name="MCP 工具结果 content") for item in self.content),
+        )
+        if self.structured_content is not None:
+            object.__setattr__(
+                self,
+                "structured_content",
+                _copy_json_mapping(
+                    self.structured_content,
+                    field_name="MCP 工具结果 structured_content",
+                ),
+            )
 
 
 class McpClient(Protocol):
@@ -78,3 +93,26 @@ class McpServerCatalog(Protocol):
 
     def get(self, name: str) -> McpServerConfiguration | None:
         """按配置名查询一个 Server，不进行网络发现。"""
+
+
+class McpToolPool(Protocol):
+    """将已发现工具作为一个整体加入本地工具池的端口。"""
+
+    def register(
+        self,
+        *,
+        server: McpServerConfiguration,
+        client: McpClient,
+        tools: Sequence[McpToolDefinition],
+    ) -> tuple[str, ...]:
+        """原子注册工具，并返回暴露给模型的稳定公开名称。"""
+
+
+def _copy_json_mapping(value: Mapping[str, object], *, field_name: str) -> Mapping[str, object]:
+    try:
+        copied = json.loads(json.dumps(dict(value), ensure_ascii=False, allow_nan=False))
+    except (TypeError, ValueError) as error:
+        raise ValueError(f"{field_name} 必须只包含 JSON 兼容的数据类型。") from error
+    if not isinstance(copied, dict):
+        raise AssertionError("JSON 对象复制后必须仍为对象。")
+    return copied

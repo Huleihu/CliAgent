@@ -92,6 +92,9 @@ class InMemoryMcpServerCatalog:
         self._servers = {server.name: server for server in servers}
         if len(self._servers) != len(servers):
             raise McpConnectionError("MCP Server 配置名称不能重复。")
+        normalized_names = {server.normalized_name for server in servers}
+        if len(normalized_names) != len(servers):
+            raise McpConnectionError("MCP Server 配置名称规范化后不能冲突。")
 
     def get(self, name: str) -> McpServerConfiguration | None:
         return self._servers.get(name)

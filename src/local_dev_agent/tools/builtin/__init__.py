@@ -6,6 +6,7 @@ from .cron_tools import CancelCronTool, ListCronsTool, ScheduleCronTool
 from .edit_file import EditFileTool
 from .list_files import ListFilesTool
 from .load_skill import LoadSkillTool
+from .mcp_tools import ConnectMcpTool
 from .read_file import ReadFileTool
 from .read_artifact import ReadArtifactTool
 from .task import TaskTool
@@ -27,6 +28,7 @@ from .worktree_tools import CreateWorktreeTool, KeepWorktreeTool, RemoveWorktree
 
 __all__ = [
     "CompactContextTool",
+    "ConnectMcpTool",
     "CreateTeamTool",
     "CreateWorktreeTool",
     "CancelCronTool",
