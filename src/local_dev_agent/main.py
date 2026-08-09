@@ -62,7 +62,19 @@ from local_dev_agent.memory import (
     ModelMemorySelector,
 )
 from local_dev_agent.observability import configure_logging
-from local_dev_agent.permissions import PermissionHook, SimplePermissionPolicy
+from local_dev_agent.mcp import McpServerConfiguration, McpToolAnnotations, McpToolDefinition
+from local_dev_agent.mcp.adapters.fake import (
+    FakeMcpClient,
+    FakeMcpClientConnector,
+    InMemoryMcpServerCatalog,
+)
+from local_dev_agent.mcp.adapters.tool_registry import (
+    McpFreeToolRegistryFactory,
+    ToolRegistryMcpToolPool,
+)
+from local_dev_agent.mcp.ports import McpCallResult
+from local_dev_agent.mcp.service import McpConnectionService
+from local_dev_agent.permissions import McpPermissionPolicy, PermissionHook, SimplePermissionPolicy, ask_user
 from local_dev_agent.recovery import (
     OutputBudgetUpgradePolicy,
     OutputContinuationPolicy,
@@ -142,6 +154,7 @@ from local_dev_agent.tools.builtin import (
     ScheduleCronTool,
     ListCronsTool,
     CancelCronTool,
+    ConnectMcpTool,
     CreateWorktreeTool,
     KeepWorktreeTool,
     TaskTool,
@@ -435,6 +448,7 @@ def register_cli_team_capability(
     clock: SystemTeamClock | None = None,
     waiter: TeamWaiter | None = None,
     thread_factory: TeamThreadFactory | None = None,
+    member_loop_factory: Callable[[ToolRegistry], MinimalAgentLoop] | None = None,
 ) -> CliTeamCapability:
     """装配父 Agent Team 工具和成员 Runner，不让 Team 领域依赖 CLI 或 Runtime 内部。"""
 
@@ -447,6 +461,8 @@ def register_cli_team_capability(
         for method_name in ("try_acquire", "release")
     ):
         raise TypeError("execution_gate 必须提供 try_acquire 和 release 方法。")
+    if member_loop_factory is not None and not callable(member_loop_factory):
+        raise TypeError("member_loop_factory 必须可调用或为 None。")
     active_task_service = task_service or create_task_service(workspace)
     state_root = workspace / "var" / "state" / "teams"
     dispatcher = EventTeamDispatcher()
@@ -467,11 +483,6 @@ def register_cli_team_capability(
         clock=active_clock,
         dispatcher=dispatcher,
         protocol_request_sender=protocol_dispatcher,
-    )
-    executor = RuntimeTeamAgentExecutor(
-        runtime_service=UserInputRuntimeService(repository),
-        loop=loop,
-        run_working_directory_registry=run_working_directory_registry,
     )
     active_waiter = waiter if waiter is not None else EventTeamWaiter()
     active_thread_factory = (
@@ -499,7 +510,7 @@ def register_cli_team_capability(
         return TeamMemberRunner(
             member=member,
             inbox_repository=inbox_repository,
-            agent_executor=executor,
+            agent_executor=team_executor,
             result_reporter=result_reporter,
             id_generator=UuidTeamIdGenerator(),
             clock=active_clock,
@@ -522,7 +533,7 @@ def register_cli_team_capability(
         return TeamLeadInboxRunner(
             member=lead,
             inbox_repository=inbox_repository,
-            agent_executor=executor,
+            agent_executor=team_executor,
             execution_gate=execution_gate,
             id_generator=UuidTeamIdGenerator(),
             clock=active_clock,
@@ -539,7 +550,95 @@ def register_cli_team_capability(
     registry.register(AssignTeamWorkTool(service))
     registry.register(SendTeamMessageTool(service))
     registry.register(RequestTeamShutdownTool(service))
+    team_loop = member_loop_factory(registry) if member_loop_factory is not None else loop
+    team_executor = RuntimeTeamAgentExecutor(
+        runtime_service=UserInputRuntimeService(repository),
+        loop=team_loop,
+        run_working_directory_registry=run_working_directory_registry,
+    )
     return capability
+
+
+@dataclass(frozen=True, slots=True)
+class CliMcpCapability:
+    """CLI 中共享的 MCP 工具池与连接服务；当前仅装配 fake Server。"""
+
+    tool_pool: ToolRegistryMcpToolPool
+    service: McpConnectionService
+
+
+def register_cli_mcp_capability(
+    *,
+    registry: ToolRegistry,
+    tool_pool: ToolRegistryMcpToolPool | None = None,
+) -> CliMcpCapability:
+    """注册教学用 docs/jira fake MCP Server，不启动真实网络或子进程。"""
+
+    if not isinstance(registry, ToolRegistry):
+        raise TypeError("registry 必须是 ToolRegistry。")
+    active_tool_pool = tool_pool if tool_pool is not None else ToolRegistryMcpToolPool(registry)
+    if not isinstance(active_tool_pool, ToolRegistryMcpToolPool):
+        raise TypeError("tool_pool 必须是 ToolRegistryMcpToolPool。")
+    docs_search = McpToolDefinition(
+        name="search",
+        description="搜索教学项目文档。",
+        input_schema={
+            "type": "object",
+            "properties": {"query": {"type": "string"}},
+            "required": ["query"],
+        },
+        annotations=McpToolAnnotations(
+            read_only_hint=True,
+            destructive_hint=False,
+            idempotent_hint=True,
+            open_world_hint=False,
+        ),
+    )
+    jira_create_issue = McpToolDefinition(
+        name="create_issue",
+        description="在教学 Jira 中创建工单。",
+        input_schema={
+            "type": "object",
+            "properties": {"summary": {"type": "string"}, "description": {"type": "string"}},
+            "required": ["summary"],
+        },
+        annotations=McpToolAnnotations(destructive_hint=True, open_world_hint=True),
+    )
+    docs_client = FakeMcpClient(
+        [docs_search],
+        {
+            "search": lambda arguments, _context: McpCallResult(
+                content=(
+                    {
+                        "type": "text",
+                        "text": f"Fake docs 搜索结果：{arguments.get('query', '')}",
+                    },
+                )
+            )
+        },
+    )
+    jira_client = FakeMcpClient(
+        [jira_create_issue],
+        {
+            "create_issue": lambda arguments, _context: McpCallResult(
+                content=(
+                    {
+                        "type": "text",
+                        "text": f"Fake Jira 已创建工单：{arguments.get('summary', '')}",
+                    },
+                )
+            )
+        },
+    )
+    service = McpConnectionService(
+        server_catalog=InMemoryMcpServerCatalog(
+            (McpServerConfiguration("docs"), McpServerConfiguration("jira"))
+        ),
+        connector=FakeMcpClientConnector({"docs": docs_client, "jira": jira_client}),
+        tool_pool=active_tool_pool,
+    )
+    registry.register(ConnectMcpTool(service))
+    return CliMcpCapability(tool_pool=active_tool_pool, service=service)
 
 
 def register_cli_worktree_capability(
@@ -589,14 +688,22 @@ def register_cli_worktree_capability(
     )
 
 
-def create_permission_hook_runner(workspace: Path) -> HookRunner:
+def create_permission_hook_runner(
+    workspace: Path,
+    *,
+    mcp_tool_pool: ToolRegistryMcpToolPool | None = None,
+) -> HookRunner:
     """组装 learnClaudeCode S3 风格的默认执行前权限检查。"""
 
     registry = HookRegistry()
-    registry.register(
-        HookEvent.PRE_TOOL_USE,
-        PermissionHook(SimplePermissionPolicy(workspace)),
-    )
+    policy = SimplePermissionPolicy(workspace)
+    if mcp_tool_pool is not None:
+        policy = McpPermissionPolicy(
+            policy,
+            mcp_tool_pool,
+            approval_prompt=ask_user,
+        )
+    registry.register(HookEvent.PRE_TOOL_USE, PermissionHook(policy))
     return HookRunner(registry)
 
 
@@ -704,6 +811,53 @@ def create_subagent_runner(
     )
 
 
+def create_cli_agent_loop(
+    *,
+    workspace: Path,
+    repository: StateRepository,
+    model: ModelClient,
+    registry: ToolRegistry,
+    conversation_repository: ConversationRepository,
+    hook_runner: HookRunner,
+    skill_catalog: SkillCatalog,
+    settings: DeepSeekSettings,
+    pending_user_message_source: BackgroundTaskNotificationSource,
+) -> MinimalAgentLoop:
+    """为 Lead 或受限 Team 会话装配同一套运行时能力，但允许使用不同工具池。"""
+
+    return MinimalAgentLoop(
+        repository,
+        model,
+        registry,
+        conversation_repository,
+        hook_runner=hook_runner,
+        system_prompt_provider=create_cli_system_prompt_provider(
+            workspace=workspace,
+            registry=registry,
+            skill_catalog=skill_catalog,
+        ),
+        todo_reminder_policy=TodoReminderPolicy(),
+        context_manager=create_context_manager(
+            workspace=workspace,
+            model=model,
+            max_output_tokens=settings.max_tokens,
+        ),
+        memory_loader=create_memory_loader(workspace=workspace, model=model),
+        memory_extraction_service=create_memory_extraction_service(
+            workspace=workspace,
+            model=model,
+        ),
+        memory_consolidation_service=create_memory_consolidation_service(
+            workspace=workspace,
+            model=model,
+        ),
+        transient_recovery_executor=create_transient_recovery_executor(settings),
+        output_budget_upgrade_policy=create_output_budget_upgrade_policy(settings),
+        output_continuation_policy=create_output_continuation_policy(),
+        pending_user_message_source=pending_user_message_source,
+    )
+
+
 def default_workspace() -> Path:
     """返回项目内固定的演示工作区，避免终端当前目录改变工具边界。"""
 
@@ -749,7 +903,11 @@ def main() -> None:
         task_service=task_service,
         run_working_directory_registry=run_working_directory_registry,
     )
-    hook_runner = create_permission_hook_runner(workspace)
+    mcp_tool_pool = ToolRegistryMcpToolPool(tool_registry)
+    hook_runner = create_permission_hook_runner(
+        workspace,
+        mcp_tool_pool=mcp_tool_pool,
+    )
     subagent_runner = create_subagent_runner(
         repository=repository,
         conversation_repository=conversation_repository,
@@ -758,35 +916,15 @@ def main() -> None:
         hook_runner=hook_runner,
     )
     tool_registry.register(TaskTool(subagent_runner))
-    loop = MinimalAgentLoop(
-        repository,
-        model,
-        tool_registry,
-        conversation_repository,
+    loop = create_cli_agent_loop(
+        workspace=workspace,
+        repository=repository,
+        model=model,
+        registry=tool_registry,
+        conversation_repository=conversation_repository,
         hook_runner=hook_runner,
-        system_prompt_provider=create_cli_system_prompt_provider(
-            workspace=workspace,
-            registry=tool_registry,
-            skill_catalog=skill_catalog,
-        ),
-        todo_reminder_policy=TodoReminderPolicy(),
-        context_manager=create_context_manager(
-            workspace=workspace,
-            model=model,
-            max_output_tokens=settings.max_tokens,
-        ),
-        memory_loader=create_memory_loader(workspace=workspace, model=model),
-        memory_extraction_service=create_memory_extraction_service(
-            workspace=workspace,
-            model=model,
-        ),
-        memory_consolidation_service=create_memory_consolidation_service(
-            workspace=workspace,
-            model=model,
-        ),
-        transient_recovery_executor=create_transient_recovery_executor(settings),
-        output_budget_upgrade_policy=create_output_budget_upgrade_policy(settings),
-        output_continuation_policy=create_output_continuation_policy(),
+        skill_catalog=skill_catalog,
+        settings=settings,
         pending_user_message_source=background_task_notifications,
     )
     execution_gate = LockCronExecutionGate()
@@ -807,7 +945,19 @@ def main() -> None:
         task_service=task_service,
         worktree_directory_resolver=worktree_capability.directory_resolver,
         run_working_directory_registry=worktree_capability.run_working_directory_registry,
+        member_loop_factory=lambda parent_registry: create_cli_agent_loop(
+            workspace=workspace,
+            repository=repository,
+            model=model,
+            registry=McpFreeToolRegistryFactory().create(parent_registry),
+            conversation_repository=conversation_repository,
+            hook_runner=hook_runner,
+            skill_catalog=skill_catalog,
+            settings=settings,
+            pending_user_message_source=background_task_notifications,
+        ),
     )
+    register_cli_mcp_capability(registry=tool_registry, tool_pool=mcp_tool_pool)
     cron_capability.start()
 
     print("Local Dev Agent")

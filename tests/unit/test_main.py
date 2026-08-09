@@ -24,6 +24,7 @@ from local_dev_agent.main import create_output_continuation_policy
 from local_dev_agent.main import execute_prompt
 from local_dev_agent.main import register_cli_background_task_capability
 from local_dev_agent.main import register_cli_cron_capability
+from local_dev_agent.main import register_cli_mcp_capability
 from local_dev_agent.main import register_cli_team_capability
 from local_dev_agent.main import register_cli_worktree_capability
 from local_dev_agent.models.fake import FakeModel
@@ -59,7 +60,8 @@ from local_dev_agent.teams import (
     TeamProtocolStatus,
 )
 from local_dev_agent.subagents import SubagentPolicy, SubagentToolRegistryFactory
-from local_dev_agent.tools import ToolCallRequest, ToolExecutionContext
+from local_dev_agent.mcp.adapters.tool_registry import McpFreeToolRegistryFactory
+from local_dev_agent.tools import ToolCallRequest, ToolExecutionContext, ToolRegistry
 from local_dev_agent.tools.builtin import TaskTool
 from local_dev_agent.tools.workspace import InMemoryRunWorkingDirectoryRegistry
 
@@ -108,6 +110,57 @@ def test_create_tool_registry_registers_the_read_only_file_listing_tool(tmp_path
         "todo_write",
         "write_file",
     ]
+
+
+def test_cli_mcp_capability_keeps_configured_tools_out_of_team_snapshots(tmp_path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    repository = JsonFileStateRepository(workspace / "var" / "state")
+    registry = create_tool_registry(workspace)
+    mcp_capability = register_cli_mcp_capability(registry=registry)
+    lead_context = ToolExecutionContext(
+        session_id="session-lead",
+        run_id="run-lead",
+        step_id="step-mcp",
+        call_id="call-connect",
+    )
+
+    connected = registry.get("connect_mcp").run({"name": "docs"}, context=lead_context)
+    captured_team_registry: list[ToolRegistry] = []
+    lead_loop = MinimalAgentLoop(
+        repository,
+        FakeModel(ModelResponse.text_completion("完成。")),
+        registry,
+    )
+
+    def create_member_loop(parent_registry: ToolRegistry) -> MinimalAgentLoop:
+        member_registry = McpFreeToolRegistryFactory().create(parent_registry)
+        captured_team_registry.append(member_registry)
+        return MinimalAgentLoop(
+            repository,
+            FakeModel(ModelResponse.text_completion("完成。")),
+            member_registry,
+        )
+
+    register_cli_team_capability(
+        workspace=workspace,
+        registry=registry,
+        repository=repository,
+        loop=lead_loop,
+        execution_gate=LockCronExecutionGate(),
+        member_loop_factory=create_member_loop,
+    )
+
+    assert connected["tools"] == ["mcp__docs__search"]
+    assert "connect_mcp" in [definition.name for definition in registry.list_definitions()]
+    assert "mcp__docs__search" in [definition.name for definition in registry.list_definitions()]
+    assert captured_team_registry
+    assert not {
+        name
+        for name in (definition.name for definition in captured_team_registry[0].list_definitions())
+        if name == "connect_mcp" or name.startswith("mcp__")
+    }
+    assert mcp_capability.tool_pool.get_annotations("mcp__docs__search") is not None
 
 
 def test_create_task_service_uses_the_workspace_task_state_root(tmp_path) -> None:

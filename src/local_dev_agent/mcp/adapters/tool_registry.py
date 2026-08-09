@@ -126,6 +126,23 @@ class ToolRegistryMcpToolPool:
         return tool.annotations if tool is not None else None
 
 
+class McpFreeToolRegistryFactory:
+    """为 Team 等受限执行者创建不含 MCP 连接与外部工具的固定快照。"""
+
+    def create(self, parent_registry: ToolRegistry) -> ToolRegistry:
+        """复制当前非 MCP 工具；后续 Lead 连接不会改变此隔离目录。"""
+
+        if not isinstance(parent_registry, ToolRegistry):
+            raise TypeError("parent_registry 必须是 ToolRegistry。")
+        registry = ToolRegistry()
+        registry.register_many(
+            parent_registry.get(definition.name)
+            for definition in parent_registry.list_definitions()
+            if not _is_mcp_tool(definition)
+        )
+        return registry
+
+
 def _to_mcp_context(context: ToolExecutionContext | None) -> McpCallContext:
     if context is None or context.call_id is None:
         raise ToolExecutionError("MCP 工具必须在携带 call_id 的执行上下文中调用。")
@@ -144,3 +161,13 @@ def _format_annotations(annotations: McpToolAnnotations) -> str:
     parts.append("可能有破坏性影响" if annotations.destructive_hint else "未声明破坏性影响")
     parts.append("可能访问外部系统" if annotations.open_world_hint else "不访问外部系统")
     return "；".join(parts) + "。"
+
+
+def _is_mcp_tool(definition: ToolDefinition) -> bool:
+    """同时按标签和稳定名称排除 MCP 工具，避免未来工具漏出。"""
+
+    return (
+        "mcp" in definition.tags
+        or definition.name == "connect_mcp"
+        or definition.name.startswith("mcp__")
+    )
