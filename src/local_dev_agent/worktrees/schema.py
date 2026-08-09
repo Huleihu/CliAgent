@@ -51,6 +51,7 @@ class Worktree:
     name: str
     directory: str
     branch: str
+    base_commit: str
 
     def __post_init__(self) -> None:
         """收束由适配器返回的可审计工作树标识和展示信息。"""
@@ -60,6 +61,8 @@ class Worktree:
             raise ValueError("工作树目录必须是非空字符串。")
         if not isinstance(self.branch, str) or not self.branch.strip():
             raise ValueError("工作树分支必须是非空字符串。")
+        if not isinstance(self.base_commit, str) or not self.base_commit.strip():
+            raise ValueError("工作树基准提交必须是非空字符串。")
 
 
 @dataclass(frozen=True, slots=True)

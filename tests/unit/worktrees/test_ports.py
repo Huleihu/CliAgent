@@ -11,7 +11,7 @@ from local_dev_agent.worktrees import (
 
 
 def test_worktree_lifecycle_gateway_port_accepts_a_structural_implementation() -> None:
-    worktree = Worktree("test1", ".worktrees/test1", "wt/test1")
+    worktree = Worktree("test1", ".worktrees/test1", "wt/test1", "abc123")
 
     class FakeWorktreeLifecycleGateway:
         def create(self, *, name: str) -> Worktree:

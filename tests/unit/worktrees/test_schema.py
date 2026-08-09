@@ -44,6 +44,7 @@ def test_lifecycle_event_captures_a_successful_create_fact() -> None:
             name="api-login",
             directory=".worktrees/api-login",
             branch="wt/api-login",
+            base_commit="abc123",
         ),
         task_id="task-api",
         occurred_at=datetime(2026, 8, 4, 12, 0, 0),

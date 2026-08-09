@@ -35,6 +35,7 @@ class FakeWorktreeLifecycleGateway:
             name=name,
             directory=f".worktrees/{name}",
             branch=f"wt/{name}",
+            base_commit="base-commit",
         )
 
     def create(self, *, name: str) -> Worktree:

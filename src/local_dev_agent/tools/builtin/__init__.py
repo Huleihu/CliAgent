@@ -23,16 +23,19 @@ from .team_tools import (
 )
 from .todo_write import TodoWriteTool
 from .write_file import WriteFileTool
+from .worktree_tools import CreateWorktreeTool, KeepWorktreeTool, RemoveWorktreeTool
 
 __all__ = [
     "CompactContextTool",
     "CreateTeamTool",
+    "CreateWorktreeTool",
     "CancelCronTool",
     "BashTool",
     "EditFileTool",
     "ListFilesTool",
     "ListCronsTool",
     "LoadSkillTool",
+    "KeepWorktreeTool",
     "ReadFileTool",
     "ScheduleCronTool",
     "ReadArtifactTool",
@@ -46,6 +49,7 @@ __all__ = [
     "AssignTeamWorkTool",
     "SendTeamMessageTool",
     "RequestTeamShutdownTool",
+    "RemoveWorktreeTool",
     "TodoWriteTool",
     "WriteFileTool",
 ]

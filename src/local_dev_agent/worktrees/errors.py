@@ -52,3 +52,20 @@ class WorktreeOperationConflictError(WorktreeError):
         self.operation_id = operation_id
         self.requested_event_type = requested_event_type
         self.recorded_event_type = recorded_event_type
+
+
+class GitWorktreeLifecycleError(WorktreeError):
+    """Git 命令无法确认工作树生命周期事实时抛出。"""
+
+    def __init__(self, *, operation: str, detail: str) -> None:
+        super().__init__(f"Git 工作树操作“{operation}”失败：{detail}。")
+        self.operation = operation
+        self.detail = detail
+
+
+class WorktreeEventJournalError(WorktreeError):
+    """工作树事件日志无法安全读取或追加时抛出。"""
+
+    def __init__(self, *, detail: str) -> None:
+        super().__init__(f"工作树事件日志失败：{detail}。")
+        self.detail = detail
