@@ -26,4 +26,5 @@ class TaskBoardTeamAutonomousWorkSource(TeamAutonomousWorkSource):
             task_id=task.task_id,
             subject=task.subject,
             description=task.description,
+            worktree=task.worktree,
         )

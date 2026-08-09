@@ -69,3 +69,12 @@ class WorktreeEventJournalError(WorktreeError):
     def __init__(self, *, detail: str) -> None:
         super().__init__(f"工作树事件日志失败：{detail}。")
         self.detail = detail
+
+
+class WorktreeRunDirectoryUnavailableError(WorktreeError):
+    """任务绑定的工作树目录不存在、越界或不能安全使用时抛出。"""
+
+    def __init__(self, *, name: str, detail: str) -> None:
+        super().__init__(f"任务绑定的工作树“{name}”不可用于本次 Run：{detail}。")
+        self.name = name
+        self.detail = detail

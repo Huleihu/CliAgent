@@ -3,8 +3,13 @@
 from __future__ import annotations
 
 from pathlib import Path
+from threading import RLock
+from typing import TYPE_CHECKING
 
 from .errors import ToolExecutionError, ToolValidationError
+
+if TYPE_CHECKING:
+    from .schema import ToolExecutionContext
 
 
 class WorkspaceBoundary:
@@ -79,3 +84,46 @@ class WorkspaceBoundary:
         if candidate.is_absolute() or ".." in candidate.parts:
             raise ToolValidationError(f"字段“{field_name}”不能使用绝对路径或上级目录。")
         return candidate
+
+
+class InMemoryRunWorkingDirectoryRegistry:
+    """为并行 Run 保存独立目录映射，未登记的调用始终回退到主工作区。"""
+
+    def __init__(self, *, main_workspace: Path) -> None:
+        self._main_workspace = WorkspaceBoundary(main_workspace).root
+        self._directories: dict[str, Path] = {}
+        self._lock = RLock()
+
+    def bind(self, *, run_id: str, directory: Path) -> None:
+        """登记已创建 Run 的实际目录；同一 Run 不允许悄悄改绑。"""
+
+        normalized_run_id = self._require_run_id(run_id)
+        if not isinstance(directory, Path):
+            raise TypeError("工作目录必须是 Path 对象。")
+        normalized_directory = WorkspaceBoundary(directory).root
+        with self._lock:
+            existing = self._directories.get(normalized_run_id)
+            if existing is not None and existing != normalized_directory:
+                raise ValueError(f"Run“{normalized_run_id}”已绑定到其他工作目录。")
+            self._directories[normalized_run_id] = normalized_directory
+
+    def release(self, *, run_id: str) -> None:
+        """移除一次 Run 的短生命周期映射；重复释放是安全的。"""
+
+        normalized_run_id = self._require_run_id(run_id)
+        with self._lock:
+            self._directories.pop(normalized_run_id, None)
+
+    def resolve(self, *, context: ToolExecutionContext | None) -> Path:
+        """按工具上下文解析目录，主会话和未登记 Run 保持主工作区。"""
+
+        if context is None:
+            return self._main_workspace
+        with self._lock:
+            return self._directories.get(context.run_id, self._main_workspace)
+
+    @staticmethod
+    def _require_run_id(run_id: str) -> str:
+        if not isinstance(run_id, str) or not run_id.strip():
+            raise ValueError("Run 标识必须是非空字符串。")
+        return run_id.strip()

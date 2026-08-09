@@ -6,7 +6,7 @@ from collections.abc import Mapping
 from pathlib import Path
 
 from ..errors import ToolExecutionError, ToolValidationError
-from ..ports import Tool
+from ..ports import Tool, ToolWorkingDirectoryResolver
 from ..schema import ToolDefinition, ToolExecutionContext
 from ..text_files import read_utf8_text
 from ..workspace import WorkspaceBoundary
@@ -15,8 +15,18 @@ from ..workspace import WorkspaceBoundary
 class EditFileTool(Tool):
     """将工作区 UTF-8 文本文件中的首次精确匹配替换为新文本。"""
 
-    def __init__(self, workspace: Path) -> None:
+    def __init__(
+        self,
+        workspace: Path,
+        *,
+        working_directory_resolver: ToolWorkingDirectoryResolver | None = None,
+    ) -> None:
         self._workspace = WorkspaceBoundary(workspace)
+        if working_directory_resolver is not None and not callable(
+            getattr(working_directory_resolver, "resolve", None)
+        ):
+            raise TypeError("工作目录解析器必须提供 resolve 方法。")
+        self._working_directory_resolver = working_directory_resolver
         self._definition = ToolDefinition(
             name="edit_file",
             description="将工作区 UTF-8 文本文件中的首次精确匹配替换为新文本。",
@@ -58,7 +68,8 @@ class EditFileTool(Tool):
         path = self._read_nonempty_text(arguments, "path")
         old_text = self._read_nonempty_text(arguments, "old_text")
         new_text = self._read_text(arguments, "new_text")
-        target_file = self._workspace.resolve_file(path)
+        workspace = self._resolve_workspace(context)
+        target_file = workspace.resolve_file(path)
         text = read_utf8_text(target_file, path)
         if old_text not in text:
             raise ToolExecutionError(f"文件中未找到要替换的文本：{path}。")
@@ -69,9 +80,16 @@ class EditFileTool(Tool):
         except OSError as error:
             raise ToolExecutionError(f"无法写入文件：{path}。") from error
         return {
-            "path": target_file.relative_to(self._workspace.root).as_posix(),
+            "path": target_file.relative_to(workspace.root).as_posix(),
             "replacements": 1,
         }
+
+    def _resolve_workspace(self, context: ToolExecutionContext | None) -> WorkspaceBoundary:
+        """按本次 Run 选择文件边界，未配置隔离时保持原有工作区。"""
+
+        if self._working_directory_resolver is None:
+            return self._workspace
+        return WorkspaceBoundary(self._working_directory_resolver.resolve(context=context))
 
     @staticmethod
     def _read_nonempty_text(arguments: Mapping[str, object], field_name: str) -> str:

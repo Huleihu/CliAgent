@@ -12,7 +12,7 @@ from local_dev_agent.background_tasks import (
 )
 
 from ..errors import ToolExecutionError, ToolValidationError
-from ..ports import Tool
+from ..ports import Tool, ToolWorkingDirectoryResolver
 from ..schema import ToolDefinition, ToolExecutionContext
 
 
@@ -26,6 +26,7 @@ class BashTool(Tool):
         background_task_service: BackgroundTaskExecutionService,
         *,
         background_execution_policy: BackgroundExecutionPolicy | None = None,
+        working_directory_resolver: ToolWorkingDirectoryResolver | None = None,
     ) -> None:
         if not isinstance(workspace, Path):
             raise TypeError("workspace 必须是 Path 对象。")
@@ -38,12 +39,17 @@ class BashTool(Tool):
             BackgroundExecutionPolicy,
         ):
             raise TypeError("background_execution_policy 必须是 BackgroundExecutionPolicy 对象。")
+        if working_directory_resolver is not None and not callable(
+            getattr(working_directory_resolver, "resolve", None)
+        ):
+            raise TypeError("工作目录解析器必须提供 resolve 方法。")
         self._workspace = workspace.resolve()
         self._command_runner = command_runner
         self._background_task_service = background_task_service
         self._background_execution_policy = (
             background_execution_policy or BackgroundExecutionPolicy()
         )
+        self._working_directory_resolver = working_directory_resolver
         self._definition = ToolDefinition(
             name="bash",
             description="在工作区运行一条 shell 命令；可显式请求后台执行慢命令。",
@@ -79,16 +85,21 @@ class BashTool(Tool):
         """前台返回命令结果，后台仅返回已派发任务的稳定关联信息。"""
 
         command = _read_command(arguments)
+        working_directory = self._resolve_working_directory(context)
         requested_background = _read_optional_boolean(arguments, "run_in_background")
         if self._background_execution_policy.should_run_in_background(
             command=command,
             requested=requested_background,
         ):
-            return self._start_background_task(command=command, context=context)
+            return self._start_background_task(
+                command=command,
+                context=context,
+                working_directory=working_directory,
+            )
         try:
             result = self._command_runner.run(
                 command=command,
-                working_directory=self._workspace,
+                working_directory=working_directory,
             )
         except Exception as error:
             raise ToolExecutionError(f"命令执行失败：{error}") from error
@@ -102,6 +113,7 @@ class BashTool(Tool):
         *,
         command: str,
         context: ToolExecutionContext | None,
+        working_directory: Path,
     ) -> Mapping[str, object]:
         """要求完整调用关联后派发任务，避免后台结果跨 Session 泄漏。"""
 
@@ -113,7 +125,7 @@ class BashTool(Tool):
                 run_id=context.run_id,
                 tool_call_id=context.call_id,
                 command=command,
-                working_directory=self._workspace,
+                working_directory=working_directory,
             )
         except Exception as error:
             raise ToolExecutionError(f"后台命令派发失败：{error}") from error
@@ -122,6 +134,13 @@ class BashTool(Tool):
             "status": task.status.value,
             "command": task.command,
         }
+
+    def _resolve_working_directory(self, context: ToolExecutionContext | None) -> Path:
+        """按本次 Run 选择命令目录，使后台任务也获得同一份目录快照。"""
+
+        if self._working_directory_resolver is None:
+            return self._workspace
+        return self._working_directory_resolver.resolve(context=context)
 
 
 def _read_command(arguments: Mapping[str, object]) -> str:

@@ -6,6 +6,7 @@ from .errors import (
     WorktreeError,
     WorktreeEventJournalError,
     WorktreeOperationConflictError,
+    WorktreeRunDirectoryUnavailableError,
     WorktreeUnsafeToRemoveError,
 )
 from .ports import (
@@ -13,6 +14,7 @@ from .ports import (
     WorktreeClock,
     WorktreeEventJournal,
     WorktreeLifecycleGateway,
+    WorktreeRunDirectoryResolver,
 )
 from .schema import (
     Worktree,
@@ -40,6 +42,8 @@ __all__ = [
     "WorktreeLifecycleGateway",
     "WorktreeOperationConflictError",
     "WorktreeOperationResult",
+    "WorktreeRunDirectoryResolver",
+    "WorktreeRunDirectoryUnavailableError",
     "WorktreeService",
     "WorktreeUnsafeToRemoveError",
     "validate_worktree_name",

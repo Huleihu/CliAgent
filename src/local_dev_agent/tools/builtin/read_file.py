@@ -6,7 +6,7 @@ from collections.abc import Mapping
 from pathlib import Path
 
 from ..errors import ToolValidationError
-from ..ports import Tool
+from ..ports import Tool, ToolWorkingDirectoryResolver
 from ..schema import ToolDefinition, ToolExecutionContext
 from ..text_files import read_utf8_text
 from ..workspace import WorkspaceBoundary
@@ -19,8 +19,18 @@ class ReadFileTool(Tool):
     _MAX_MAX_LINES = 1_000
     _MAX_CONTENT_CHARS = 20_000
 
-    def __init__(self, workspace: Path) -> None:
+    def __init__(
+        self,
+        workspace: Path,
+        *,
+        working_directory_resolver: ToolWorkingDirectoryResolver | None = None,
+    ) -> None:
         self._workspace = WorkspaceBoundary(workspace)
+        if working_directory_resolver is not None and not callable(
+            getattr(working_directory_resolver, "resolve", None)
+        ):
+            raise TypeError("工作目录解析器必须提供 resolve 方法。")
+        self._working_directory_resolver = working_directory_resolver
         self._definition = ToolDefinition(
             name="read_file",
             description="读取工作区内 UTF-8 文本文件的有限行数，仅返回相对路径和文本内容。",
@@ -67,7 +77,8 @@ class ReadFileTool(Tool):
             default=self._DEFAULT_MAX_LINES,
             maximum=self._MAX_MAX_LINES,
         )
-        target_file = self._workspace.resolve_file(path)
+        workspace = self._resolve_workspace(context)
+        target_file = workspace.resolve_file(path)
         text = read_utf8_text(target_file, path)
         lines = text.splitlines()
         selected_lines = lines[start_line - 1 : start_line - 1 + max_lines]
@@ -78,11 +89,18 @@ class ReadFileTool(Tool):
         lines_truncated = len(lines) > start_line - 1 + len(selected_lines)
 
         return {
-            "path": target_file.relative_to(self._workspace.root).as_posix(),
+            "path": target_file.relative_to(workspace.root).as_posix(),
             "content": content,
             "total_lines": len(lines),
             "truncated": lines_truncated or content_truncated,
         }
+
+    def _resolve_workspace(self, context: ToolExecutionContext | None) -> WorkspaceBoundary:
+        """按本次 Run 选择文件边界，未配置隔离时保持原有工作区。"""
+
+        if self._working_directory_resolver is None:
+            return self._workspace
+        return WorkspaceBoundary(self._working_directory_resolver.resolve(context=context))
 
     @staticmethod
     def _read_path(arguments: Mapping[str, object]) -> str:

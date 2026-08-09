@@ -2,6 +2,7 @@
 
 from collections.abc import Callable, Sequence
 from datetime import datetime
+from pathlib import Path
 from threading import Event, Thread
 from typing import TYPE_CHECKING, Protocol
 
@@ -223,6 +224,7 @@ class TeamAgentExecutor(Protocol):
         *,
         member: TeamMember,
         prompt: str,
+        working_directory: Path | None = None,
     ) -> TeamPromptExecution:
         """执行一次成员 Run，并返回其 Session、Run 和最终文本。"""
 

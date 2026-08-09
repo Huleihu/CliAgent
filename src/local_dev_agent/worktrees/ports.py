@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from pathlib import Path
 from typing import Protocol
 
 from .schema import (
@@ -69,3 +70,10 @@ class WorktreeApplicationService(Protocol):
 
     def keep_worktree(self, *, name: str, operation_id: str) -> WorktreeOperationResult:
         """保留工作树以供人工评审。"""
+
+
+class WorktreeRunDirectoryResolver(Protocol):
+    """将任务绑定的工作树名称解析为成员 Run 可使用的真实目录。"""
+
+    def resolve(self, *, worktree_name: str | None) -> Path:
+        """未绑定任务返回主工作区；已绑定但不可用时必须失败而非回退。"""

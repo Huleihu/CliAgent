@@ -1,6 +1,6 @@
 import pytest
 
-from local_dev_agent.tasks import Task
+from local_dev_agent.tasks import Task, TaskStatus
 from local_dev_agent.teams import TaskBoardTeamAutonomousWorkSource, TeamMember
 
 
@@ -28,10 +28,13 @@ def _member() -> TeamMember:
 
 def test_work_source_claims_a_task_with_member_identity_and_converts_it() -> None:
     task_board = RecordingTaskBoard(
-        Task.create(
+        Task(
             task_id="task-api",
             subject="实现登录 API。",
             description="新增登录端点并覆盖失败场景。",
+            status=TaskStatus.PENDING,
+            owner=None,
+            worktree="api-login",
         )
     )
     source = TaskBoardTeamAutonomousWorkSource(task_board=task_board)  # type: ignore[arg-type]
@@ -43,6 +46,7 @@ def test_work_source_claims_a_task_with_member_identity_and_converts_it() -> Non
     assert work_item.task_id == "task-api"
     assert work_item.subject == "实现登录 API。"
     assert work_item.description == "新增登录端点并覆盖失败场景。"
+    assert work_item.worktree == "api-login"
 
 
 def test_work_source_returns_none_when_the_task_board_has_no_claimable_task() -> None:

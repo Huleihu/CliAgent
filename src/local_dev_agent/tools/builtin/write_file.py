@@ -6,7 +6,7 @@ from collections.abc import Mapping
 from pathlib import Path
 
 from ..errors import ToolExecutionError, ToolValidationError
-from ..ports import Tool
+from ..ports import Tool, ToolWorkingDirectoryResolver
 from ..schema import ToolDefinition, ToolExecutionContext
 from ..workspace import WorkspaceBoundary
 
@@ -14,8 +14,18 @@ from ..workspace import WorkspaceBoundary
 class WriteFileTool(Tool):
     """创建或覆盖工作区内的 UTF-8 文本文件。"""
 
-    def __init__(self, workspace: Path) -> None:
+    def __init__(
+        self,
+        workspace: Path,
+        *,
+        working_directory_resolver: ToolWorkingDirectoryResolver | None = None,
+    ) -> None:
         self._workspace = WorkspaceBoundary(workspace)
+        if working_directory_resolver is not None and not callable(
+            getattr(working_directory_resolver, "resolve", None)
+        ):
+            raise TypeError("工作目录解析器必须提供 resolve 方法。")
+        self._working_directory_resolver = working_directory_resolver
         self._definition = ToolDefinition(
             name="write_file",
             description="创建或覆盖工作区内的 UTF-8 文本文件，仅接受相对路径。",
@@ -52,7 +62,8 @@ class WriteFileTool(Tool):
 
         path = self._read_path(arguments)
         content = self._read_content(arguments)
-        target_file = self._workspace.resolve_write_file(path)
+        workspace = self._resolve_workspace(context)
+        target_file = workspace.resolve_write_file(path)
         try:
             target_file.parent.mkdir(parents=True, exist_ok=True)
             target_file.write_bytes(content.encode("utf-8"))
@@ -60,9 +71,16 @@ class WriteFileTool(Tool):
             raise ToolExecutionError(f"无法写入文件：{path}。") from error
 
         return {
-            "path": target_file.relative_to(self._workspace.root).as_posix(),
+            "path": target_file.relative_to(workspace.root).as_posix(),
             "bytes_written": len(content.encode("utf-8")),
         }
+
+    def _resolve_workspace(self, context: ToolExecutionContext | None) -> WorkspaceBoundary:
+        """按本次 Run 选择文件边界，未配置隔离时保持原有工作区。"""
+
+        if self._working_directory_resolver is None:
+            return self._workspace
+        return WorkspaceBoundary(self._working_directory_resolver.resolve(context=context))
 
     @staticmethod
     def _read_path(arguments: Mapping[str, object]) -> str:

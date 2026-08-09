@@ -57,9 +57,17 @@ class RecordingExecutor:
         self.session_id = session_id
         self.fail = fail
         self.prompts: list[str] = []
+        self.working_directories: list[Path | None] = []
 
-    def execute(self, *, member: TeamMember, prompt: str) -> TeamPromptExecution:
+    def execute(
+        self,
+        *,
+        member: TeamMember,
+        prompt: str,
+        working_directory: Path | None = None,
+    ) -> TeamPromptExecution:
         self.prompts.append(prompt)
+        self.working_directories.append(working_directory)
         if self.fail:
             raise RuntimeError("模拟 Runtime 失败")
         return TeamPromptExecution(
@@ -86,6 +94,21 @@ class RecordingAutonomousWorkSource:
     def claim_next_work(self, *, member: TeamMember) -> TeamAutonomousWorkItem | None:
         self.member_ids.append(member.member_id)
         return self.work_item
+
+
+class RecordingWorktreeDirectoryResolver:
+    """按工作树名称返回预设目录，记录 Runner 是否在启动 Run 前完成解析。"""
+
+    def __init__(self, *, main_workspace: Path, directories: dict[str, Path]) -> None:
+        self.main_workspace = main_workspace
+        self.directories = directories
+        self.names: list[str | None] = []
+
+    def resolve(self, *, worktree_name: str | None) -> Path:
+        self.names.append(worktree_name)
+        if worktree_name is None:
+            return self.main_workspace
+        return self.directories[worktree_name]
 
 
 class RecordingAutonomousWorkVerifier:
@@ -190,6 +213,7 @@ def _runner(
     autonomous_work_source: object | None = None,
     autonomous_work_verifier: object | None = None,
     autonomous_result_reporter: object | None = None,
+    autonomous_worktree_directory_resolver: object | None = None,
 ) -> TeamMemberRunner:
     dispatcher = EventTeamDispatcher()
     inbox = JsonFileTeamInboxRepository(tmp_path)
@@ -211,6 +235,7 @@ def _runner(
         autonomous_work_source=autonomous_work_source,  # type: ignore[arg-type]
         autonomous_work_verifier=autonomous_work_verifier,  # type: ignore[arg-type]
         autonomous_result_reporter=autonomous_result_reporter,  # type: ignore[arg-type]
+        autonomous_worktree_directory_resolver=autonomous_worktree_directory_resolver,  # type: ignore[arg-type]
     )
 
 
@@ -324,6 +349,33 @@ def test_runner_executes_claimed_autonomous_work_only_when_inbox_is_empty(tmp_pa
         team_id="team-001",
         recipient_member_id="lead-001",
     ) == ()
+
+
+def test_runner_resolves_task_worktree_before_starting_autonomous_member_run(tmp_path: Path) -> None:
+    main_workspace = tmp_path / "main"
+    worktree = main_workspace / ".worktrees" / "api-login"
+    worktree.mkdir(parents=True)
+    resolver = RecordingWorktreeDirectoryResolver(
+        main_workspace=main_workspace,
+        directories={"api-login": worktree},
+    )
+    executor = RecordingExecutor()
+    work_item = TeamAutonomousWorkItem(
+        task_id="task-api",
+        subject="实现登录 API。",
+        description="",
+        worktree="api-login",
+    )
+
+    assert _runner(
+        tmp_path,
+        executor=executor,
+        autonomous_work_source=RecordingAutonomousWorkSource(work_item),
+        autonomous_worktree_directory_resolver=resolver,
+    ).process_once() is True
+
+    assert resolver.names == ["api-login"]
+    assert executor.working_directories == [worktree]
 
 
 def test_runner_keeps_existing_inbox_work_ahead_of_autonomous_claims(tmp_path: Path) -> None:

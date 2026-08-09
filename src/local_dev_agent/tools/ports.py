@@ -1,9 +1,27 @@
 """工具实现与执行边界之间的稳定端口。"""
 
 from abc import ABC, abstractmethod
-from typing import Mapping
+from pathlib import Path
+from typing import Mapping, Protocol
 
 from .schema import ToolDefinition, ToolExecutionContext
+
+
+class ToolWorkingDirectoryResolver(Protocol):
+    """按一次工具调用所属 Run 返回其受限工作目录。"""
+
+    def resolve(self, *, context: ToolExecutionContext | None) -> Path:
+        """未绑定 Run 时返回主工作区，已绑定 Run 时返回其专属目录。"""
+
+
+class RunWorkingDirectoryRegistry(ToolWorkingDirectoryResolver, Protocol):
+    """维护短生命周期的 Run 到工作目录映射，避免改变进程全局 cwd。"""
+
+    def bind(self, *, run_id: str, directory: Path) -> None:
+        """在 Agent Loop 执行前登记该 Run 的工作目录。"""
+
+    def release(self, *, run_id: str) -> None:
+        """在 Agent Loop 结束后移除映射，防止后续 Run 误用目录。"""
 
 
 class Tool(ABC):

@@ -69,6 +69,7 @@ class TeamAutonomousWorkItem:
     task_id: str
     subject: str
     description: str
+    worktree: str | None = None
 
     def __post_init__(self) -> None:
         """冻结已认领任务的展示内容，避免 Runner 依赖 S12 的具体模型。"""
@@ -77,6 +78,8 @@ class TeamAutonomousWorkItem:
         object.__setattr__(self, "subject", _require_nonempty_text("subject", self.subject))
         if not isinstance(self.description, str):
             raise ValueError("字段“description”必须是字符串。")
+        if self.worktree is not None:
+            object.__setattr__(self, "worktree", _require_nonempty_text("worktree", self.worktree))
 
 
 def _normalize_protocol_message_fields(

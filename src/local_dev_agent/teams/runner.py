@@ -29,6 +29,7 @@ from .schema import (
     TeamMessage,
     TeamPromptExecution,
 )
+from local_dev_agent.worktrees import WorktreeRunDirectoryResolver
 
 
 logger = logging.getLogger(__name__)
@@ -53,6 +54,7 @@ class TeamMemberRunner:
         autonomous_work_source: TeamAutonomousWorkSource | None = None,
         autonomous_work_verifier: TeamAutonomousWorkVerifier | None = None,
         autonomous_result_reporter: TeamAutonomousResultReporter | None = None,
+        autonomous_worktree_directory_resolver: WorktreeRunDirectoryResolver | None = None,
         batch_size: int = 10,
         check_interval_seconds: float = 1.0,
     ) -> None:
@@ -96,6 +98,10 @@ class TeamMemberRunner:
             getattr(autonomous_result_reporter, "report", None)
         ):
             raise TypeError("autonomous_result_reporter 必须提供 report 方法或为 None。")
+        if autonomous_worktree_directory_resolver is not None and not callable(
+            getattr(autonomous_worktree_directory_resolver, "resolve", None)
+        ):
+            raise TypeError("autonomous_worktree_directory_resolver 必须提供 resolve 方法或为 None。")
         if (autonomous_work_verifier is None) != (autonomous_result_reporter is None):
             raise ValueError("自主任务核验器和结果回传器必须同时配置或同时省略。")
         if isinstance(batch_size, bool) or not isinstance(batch_size, int) or batch_size < 1:
@@ -123,6 +129,7 @@ class TeamMemberRunner:
         self._autonomous_work_source = autonomous_work_source
         self._autonomous_work_verifier = autonomous_work_verifier
         self._autonomous_result_reporter = autonomous_result_reporter
+        self._autonomous_worktree_directory_resolver = autonomous_worktree_directory_resolver
         self._batch_size = batch_size
         self._check_interval_seconds = float(check_interval_seconds)
         self._stop_event = Event()
@@ -181,10 +188,7 @@ class TeamMemberRunner:
         if work_item is None:
             return False
         try:
-            execution = self._agent_executor.execute(
-                member=self._member,
-                prompt=format_autonomous_work_prompt(work_item),
-            )
+            execution = self._execute_autonomous_work_item(work_item)
             if execution.session_id != self._member.session_id:
                 raise ValueError("Team 自主任务执行结果不属于该成员的 Session。")
             return self._verify_and_report_autonomous_work(
@@ -201,6 +205,24 @@ class TeamMemberRunner:
                 work_item=work_item,
                 execution=None,
             )
+
+    def _execute_autonomous_work_item(
+        self,
+        work_item: TeamAutonomousWorkItem,
+    ) -> TeamPromptExecution:
+        """仅在配置了 S18 目录解析器时把任务工作树传入成员 Run。"""
+
+        prompt = format_autonomous_work_prompt(work_item)
+        if self._autonomous_worktree_directory_resolver is None:
+            return self._agent_executor.execute(member=self._member, prompt=prompt)
+        working_directory = self._autonomous_worktree_directory_resolver.resolve(
+            worktree_name=work_item.worktree
+        )
+        return self._agent_executor.execute(
+            member=self._member,
+            prompt=prompt,
+            working_directory=working_directory,
+        )
 
     def _verify_and_report_autonomous_work(
         self,

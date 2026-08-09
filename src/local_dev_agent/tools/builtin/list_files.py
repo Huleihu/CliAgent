@@ -6,7 +6,7 @@ from collections.abc import Mapping
 from pathlib import Path
 
 from ..errors import ToolExecutionError, ToolValidationError
-from ..ports import Tool
+from ..ports import Tool, ToolWorkingDirectoryResolver
 from ..schema import ToolDefinition, ToolExecutionContext
 from ..workspace import WorkspaceBoundary
 
@@ -17,8 +17,18 @@ class ListFilesTool(Tool):
     _DEFAULT_LIMIT = 200
     _MAX_LIMIT = 1_000
 
-    def __init__(self, workspace: Path) -> None:
+    def __init__(
+        self,
+        workspace: Path,
+        *,
+        working_directory_resolver: ToolWorkingDirectoryResolver | None = None,
+    ) -> None:
         self._workspace = WorkspaceBoundary(workspace)
+        if working_directory_resolver is not None and not callable(
+            getattr(working_directory_resolver, "resolve", None)
+        ):
+            raise TypeError("工作目录解析器必须提供 resolve 方法。")
+        self._working_directory_resolver = working_directory_resolver
         self._definition = ToolDefinition(
             name="list_files",
             description="列出工作区内符合 glob 模式的文件，仅返回相对路径。",
@@ -59,8 +69,9 @@ class ListFilesTool(Tool):
         directory = self._read_text(arguments, "directory", default=".")
         pattern = self._read_text(arguments, "pattern", default="*")
         limit = self._read_limit(arguments)
-        target_directory = self._workspace.resolve_directory(directory)
-        safe_pattern = self._workspace.validate_pattern(pattern)
+        workspace = self._resolve_workspace(context)
+        target_directory = workspace.resolve_directory(directory)
+        safe_pattern = workspace.validate_pattern(pattern)
 
         try:
             matched_paths = sorted(target_directory.glob(safe_pattern))
@@ -68,14 +79,21 @@ class ListFilesTool(Tool):
             raise ToolExecutionError(f"文件匹配模式无效：{pattern}。") from error
 
         files = [
-            path.relative_to(self._workspace.root).as_posix()
+            path.relative_to(workspace.root).as_posix()
             for path in matched_paths
-            if path.is_file() and self._workspace.contains(path)
+            if path.is_file() and workspace.contains(path)
         ]
         return {
             "files": files[:limit],
             "truncated": len(files) > limit,
         }
+
+    def _resolve_workspace(self, context: ToolExecutionContext | None) -> WorkspaceBoundary:
+        """按本次 Run 选择文件边界，未配置隔离时保持原有工作区。"""
+
+        if self._working_directory_resolver is None:
+            return self._workspace
+        return WorkspaceBoundary(self._working_directory_resolver.resolve(context=context))
 
     @staticmethod
     def _read_text(arguments: Mapping[str, object], field_name: str, *, default: str) -> str:

@@ -14,6 +14,7 @@ from local_dev_agent.permissions import PermissionHook, SimplePermissionPolicy
 from local_dev_agent.tools import ToolCallRequest, ToolExecutionContext, ToolExecutor, ToolRegistry
 from local_dev_agent.tools.builtin import BashTool
 from local_dev_agent.tools.errors import ToolExecutionError, ToolValidationError
+from local_dev_agent.tools.workspace import InMemoryRunWorkingDirectoryRegistry
 
 
 class RecordingCommandRunner:
@@ -117,6 +118,30 @@ def test_bash_tool_dispatches_explicit_background_command_with_execution_context
             "working_directory": tmp_path.resolve(),
         }
     ]
+
+
+def test_bash_tool_uses_the_same_run_workspace_for_foreground_and_background_commands(
+    tmp_path: Path,
+) -> None:
+    main_workspace = tmp_path / "main"
+    worktree = main_workspace / ".worktrees" / "api-login"
+    worktree.mkdir(parents=True)
+    registry = InMemoryRunWorkingDirectoryRegistry(main_workspace=main_workspace)
+    registry.bind(run_id="run-001", directory=worktree)
+    command_runner = RecordingCommandRunner(CommandExecutionResult(exit_code=0, output="完成"))
+    background_service = RecordingBackgroundTaskService()
+    tool = BashTool(
+        main_workspace,
+        command_runner,
+        background_service,
+        working_directory_resolver=registry,
+    )
+
+    tool.run({"command": "git status"}, context=_context())
+    tool.run({"command": "python -m pytest", "run_in_background": True}, context=_context())
+
+    assert command_runner.calls == [("git status", worktree.resolve())]
+    assert background_service.calls[0]["working_directory"] == worktree.resolve()
 
 
 def test_bash_tool_uses_slow_command_heuristic_only_when_model_omits_the_flag(

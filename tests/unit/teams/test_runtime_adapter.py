@@ -1,8 +1,11 @@
 from types import SimpleNamespace
+from pathlib import Path
 
 import pytest
 
 from local_dev_agent.teams import RuntimeTeamAgentExecutor, TeamMember
+from local_dev_agent.tools import ToolExecutionContext
+from local_dev_agent.tools.workspace import InMemoryRunWorkingDirectoryRegistry
 
 
 class RecordingRuntimeService:
@@ -13,7 +16,7 @@ class RecordingRuntimeService:
 
     def handle(self, event: object) -> object:
         self.events.append(event)
-        return object()
+        return SimpleNamespace(run=SimpleNamespace(run_id="run-001"))
 
 
 class RecordingLoop:
@@ -68,3 +71,74 @@ def test_runtime_adapter_validates_its_boundary() -> None:
             runtime_service=RecordingRuntimeService(),  # type: ignore[arg-type]
             loop=RecordingLoop(),  # type: ignore[arg-type]
         ).execute(member=_member(), prompt=" ")
+
+
+def test_runtime_adapter_binds_working_directory_only_while_the_run_executes(
+    tmp_path: Path,
+) -> None:
+    main_workspace = tmp_path / "main"
+    worktree = main_workspace / ".worktrees" / "api-login"
+    worktree.mkdir(parents=True)
+    registry = InMemoryRunWorkingDirectoryRegistry(main_workspace=main_workspace)
+
+    class InspectingLoop(RecordingLoop):
+        def execute(self, start: object) -> object:
+            context = ToolExecutionContext(
+                session_id="session-alice",
+                run_id="run-001",
+                step_id="step-001",
+            )
+            assert registry.resolve(context=context) == worktree.resolve()
+            return super().execute(start)
+
+    executor = RuntimeTeamAgentExecutor(
+        runtime_service=RecordingRuntimeService(),  # type: ignore[arg-type]
+        loop=InspectingLoop(),  # type: ignore[arg-type]
+        run_working_directory_registry=registry,
+    )
+
+    execution = executor.execute(
+        member=_member(),
+        prompt="[S17 自主任务]\n实现登录 API。",
+        working_directory=worktree,
+    )
+
+    assert execution.run_id == "run-001"
+    assert registry.resolve(
+        context=ToolExecutionContext(
+            session_id="session-alice",
+            run_id="run-001",
+            step_id="step-001",
+        )
+    ) == main_workspace.resolve()
+
+
+def test_runtime_adapter_releases_working_directory_when_loop_raises(tmp_path: Path) -> None:
+    main_workspace = tmp_path / "main"
+    worktree = main_workspace / ".worktrees" / "api-login"
+    worktree.mkdir(parents=True)
+    registry = InMemoryRunWorkingDirectoryRegistry(main_workspace=main_workspace)
+
+    class FailingLoop:
+        def execute(self, start: object) -> object:
+            raise RuntimeError("模拟执行失败")
+
+    executor = RuntimeTeamAgentExecutor(
+        runtime_service=RecordingRuntimeService(),  # type: ignore[arg-type]
+        loop=FailingLoop(),  # type: ignore[arg-type]
+        run_working_directory_registry=registry,
+    )
+
+    with pytest.raises(RuntimeError, match="模拟执行失败"):
+        executor.execute(
+            member=_member(),
+            prompt="[S17 自主任务]\n实现登录 API。",
+            working_directory=worktree,
+        )
+    assert registry.resolve(
+        context=ToolExecutionContext(
+            session_id="session-alice",
+            run_id="run-001",
+            step_id="step-001",
+        )
+    ) == main_workspace.resolve()
